@@ -439,7 +439,7 @@ let S = null;  // Will hold the dataset after async load
 
 async function loadDataset() {
   try {
-    const response = await fetch('./swertres_dataset.json');
+    const response = await fetch('/swertres_dataset.json');
     if (!response.ok) throw new Error(`Failed to load: ${response.status}`);
     S = await response.json();
     console.log('Dataset loaded:', S.meta);
