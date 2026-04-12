@@ -287,6 +287,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <div id="page-validate" class="page">
   <div class="al al-p" style="margin-bottom:1rem">
     <strong>⚗️ Scientific Validation</strong> — 95/5 chronological split · 4 baselines · Bonferroni Z-test (α=0.0125) · Wilson CIs · Zero leakage
+    <span id="val-draw-hint" style="margin-left:.5rem;font-size:.65rem;color:var(--m)"></span>
   </div>
   <div id="val-status" style="text-align:center;padding:2rem">
     <div class="spinner" style="margin:0 auto .8rem;width:50px;height:50px"></div>
@@ -763,6 +764,9 @@ function runBacktest(draws,ratio=.95){
 }
 
 function renderValidate(){
+  /* Show draw count so user knows if backtest can run */
+  const hint=document.getElementById('val-draw-hint');
+  if(hint)hint.textContent=`(${ALL_DRAWS.length} draws loaded · min 20 required)`;
   if(VAL_CACHE){showValResults(VAL_CACHE);return;}
   // Reset display state before computing
   document.getElementById('val-status').style.display='block';
@@ -774,15 +778,44 @@ function renderValidate(){
     clearInterval(tick);
     try{
       const rpt=runBacktest(ALL_DRAWS);
+      /* runBacktest returns {error:...} instead of throwing — must check explicitly */
+      if(rpt.error){
+        document.getElementById('val-status').innerHTML=`
+          <div class="al al-r" style="text-align:left;line-height:1.8">
+            <strong>⚠ Cannot run backtest</strong><br>
+            ${rpt.error}<br>
+            <span style="font-size:.65rem;color:var(--m)">
+              You have <strong style="color:var(--a)">${ALL_DRAWS.length}</strong> draw(s) loaded.
+              Backtest requires at least <strong>20</strong>.<br>
+              Use <strong>➕ Add Result</strong> or <strong>📥 Bulk Import</strong> to add historical draws first.
+            </span>
+          </div>`;
+        return;
+      }
       VAL_CACHE=rpt;wLS(LSV,rpt);
       showValResults(rpt);
     }catch(e){
-      document.getElementById('val-status').innerHTML=`<div class="al al-r">Validation failed: ${e.message}</div>`;
+      document.getElementById('val-status').innerHTML=`<div class="al al-r">Validation error: ${e.message}</div>`;
     }
   },200);
 }
 
 function showValResults(rpt){
+  /* Defensive guard — catches stale cached error objects from localStorage */
+  if(!rpt||rpt.error||!rpt.results||!rpt.significance){
+    document.getElementById('val-status').style.display='block';
+    document.getElementById('val-status').innerHTML=`
+      <div class="al al-r" style="text-align:left;line-height:1.8">
+        <strong>⚠ ${rpt?.error||'Invalid backtest data'}</strong><br>
+        <span style="font-size:.65rem;color:var(--m)">
+          Add at least 20 draws via ➕ Add Result or 📥 Bulk Import, then re-run.
+        </span>
+      </div>`;
+    document.getElementById('val-results').style.display='none';
+    /* Clear any bad cached result */
+    VAL_CACHE=null;localStorage.removeItem(LSV);
+    return;
+  }
   const res=rpt.results,sig=rpt.significance,v=rpt.verdict;
   const vc=v==='REAL SIGNAL'?'var(--g)':v==='WEAK SIGNAL'?'var(--a)':'var(--r)';
   const models=['Current System','Markov Only','Frequency Only','Random Baseline'];
@@ -1044,7 +1077,7 @@ function loadMoreH(){HIST_SHOWN+=300;filterH();}
   autoFill();
   initInputPage();
   renderDash();
-  console.info(`[v5] Init OK. Base: ${S.meta.total} | User: ${USER_DRAWS.length} | Combined: ${ALL_DRAWS.length}`);
+  console.log(`[v5.1] Init OK. Base: ${S.meta.total} | User: ${USER_DRAWS.length} | Combined: ${ALL_DRAWS.length}`);
 })();
 </script>
 </body>
