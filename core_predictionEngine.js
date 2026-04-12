@@ -41,10 +41,76 @@ function normalizeWeights(weights) {
 }
 
 /**
+ * Validate S structure and provide defaults for missing properties.
+ * Ensures graceful degradation if S is incomplete.
+ */
+function validateAndFixS(S) {
+  if (!S) S = {};
+  
+  // Ensure slot_stats exists
+  if (!S.slot_stats) {
+    S.slot_stats = {
+      '2pm': { pos_freq: [{'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}] },
+      '5pm': { pos_freq: [{'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}] },
+      '9pm': { pos_freq: [{'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}] }
+    };
+  }
+  
+  // Ensure pos_freq exists as fallback
+  if (!S.pos_freq) {
+    S.pos_freq = [{'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}, {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10}];
+  }
+  
+  // Ensure dow_stats exists
+  if (!S.dow_stats) {
+    S.dow_stats = {};
+    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].forEach(dow => {
+      S.dow_stats[dow] = { digit_freq: {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10} };
+    });
+  }
+  
+  // Ensure sum_freq exists
+  if (!S.sum_freq) {
+    S.sum_freq = {};
+    for (let i = 0; i <= 27; i++) S.sum_freq[i] = 1;
+  }
+  
+  // Ensure dtrans2 exists (2nd-order Markov)
+  if (!S.dtrans2) {
+    S.dtrans2 = [{}, {}, {}]; // 3 positions, each with empty state data
+  }
+  
+  // Ensure ml_pos exists (ML positional weights)
+  if (!S.ml_pos) {
+    S.ml_pos = {
+      '0': {'0':0.1,'1':0.1,'2':0.1,'3':0.1,'4':0.1,'5':0.1,'6':0.1,'7':0.1,'8':0.1,'9':0.1},
+      '1': {'0':0.1,'1':0.1,'2':0.1,'3':0.1,'4':0.1,'5':0.1,'6':0.1,'7':0.1,'8':0.1,'9':0.1},
+      '2': {'0':0.1,'1':0.1,'2':0.1,'3':0.1,'4':0.1,'5':0.1,'6':0.1,'7':0.1,'8':0.1,'9':0.1}
+    };
+  }
+  
+  // Ensure monthly_stats exists
+  if (!S.monthly_stats) {
+    S.monthly_stats = {};
+    for (let m = 1; m <= 12; m++) {
+      S.monthly_stats[m] = { digit_freq: {'0':10,'1':10,'2':10,'3':10,'4':10,'5':10,'6':10,'7':10,'8':10,'9':10} };
+    }
+  }
+  
+  // Ensure meta exists
+  if (!S.meta) S.meta = { total: 0 };
+  
+  return S;
+}
+
+/**
  * Build scoring context from current state.
  * Called once per prediction run, not per combo.
  */
 function buildScoringContext(S, mergedTrans, transRowSums, mergedComboFreq, liveGaps, decayWeights, slot, dow, drawHistory) {
+  // Validate S and add missing properties
+  S = validateAndFixS(S);
+  
   const lastResult = drawHistory.length > 0
     ? drawHistory[drawHistory.length - 1].result
     : '000';
