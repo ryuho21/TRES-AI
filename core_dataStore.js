@@ -1,48 +1,160 @@
 /**
- * dataStore.js — Merges base statistical dataset (S) with user-added draws
+ * core_dataStore.js — Merges base statistical dataset (S) with user-added draws v5.2
  *
- * KEY DESIGN DECISION:
- * The base statistical data (S) is embedded as precomputed aggregates
- * (frequency tables, Markov matrices, etc.) — NOT raw historical draws.
- * We never generate synthetic draws. User-added draws extend the live dataset.
+ * FIXES (v5.2):
+ * - FIX-A: buildLiveDtrans2() replaces stale dataset dtrans2 (was 2/100 states)
+ * - FIX-C: getSlotPosFreqNormalized() detects scale mismatch (counts vs percentages)
+ * - FIX-D: normalizeDOW() cleans dirty day_of_week strings in all_draws
  *
- * This eliminates BUG-A (synthetic data pollution) entirely.
+ * PRESERVED from v5.1:
+ * - BUG-A: No synthetic draws. Base data from S.all_draws / S.recent_500 only.
+ * - computeLiveGaps returns flat numeric Array-of-Arrays (not Array-of-Objects)
  */
 
 /**
- * Build the combined draw list: base recent draws + user draws.
- * Base draws (S.recent_500) are treated as verified seed data.
- * User draws are appended and deduplicated.
+ * Canonical DOW normalization: maps all observed raw values to clean strings.
+ * 'SA' (1928 entries), 'T H' (15), 'THH' (3), '?' (6) were found in all_draws.
+ */
+const DOW_NORM_MAP = {
+  // Garbled values found in dataset
+  'SA':  'Saturday',
+  'THH': 'Thursday',
+  'T H': 'Thursday',
+  '?':   '',
+  // Full names (pass through unchanged)
+  'Monday':    'Monday',
+  'Tuesday':   'Tuesday',
+  'Wednesday': 'Wednesday',
+  'Thursday':  'Thursday',
+  'Friday':    'Friday',
+  'Saturday':  'Saturday',
+  'Sunday':    'Sunday',
+};
+
+/** Normalize a single day_of_week string */
+function normalizeDOW(dow) {
+  if (dow === undefined || dow === null) return '';
+  return DOW_NORM_MAP[dow] !== undefined ? DOW_NORM_MAP[dow] : dow;
+}
+
+/**
+ * Build the combined draw list: base draws + user draws.
+ * Applies DOW normalization to all draws on ingestion.
  *
- * @param {Object} S - The embedded statistical dataset
+ * @param {Object} S         - The embedded statistical dataset
  * @param {Array}  userDraws - User-persisted draws from localStorage
  * @returns {{ draws: Array, userStartIdx: number }}
  */
 function buildDrawList(S, userDraws) {
-  const baseDraws = (S.recent_500 || []).map(d => ({ ...d, _source: 'base' }));
+  const baseDraws = (S.all_draws || S.recent_500 || []).map(d => ({
+    ...d,
+    day_of_week: normalizeDOW(d.day_of_week),
+    _source: 'base',
+  }));
 
-  // Deduplicate user draws against base
   const baseKeys = new Set(baseDraws.map(drawKey));
   const newUserDraws = userDraws
-    .map(d => ({ ...d, _source: 'user' }))
+    .map(d => ({ ...d, day_of_week: normalizeDOW(d.day_of_week), _source: 'user' }))
     .filter(d => !baseKeys.has(drawKey(d)));
 
   const draws = [...baseDraws, ...newUserDraws];
   return { draws, userStartIdx: baseDraws.length };
 }
 
-/** Stable key for deduplication */
+/** Stable deduplication key */
 function drawKey(d) {
   return `${d.year}-${d.month}-${d.day}-${d.draw_time}`;
 }
 
 /**
- * Compute live digit gaps from a draw list.
- * Returns gaps[position][digit] = draws since last appearance (0 = last draw)
+ * FIX-A: Build full live 2nd-order Markov transition table from draw history.
+ *
+ * The dataset's dtrans2 was stale (only 2 of 100 possible states populated
+ * per position). This function computes all 100 states from all_draws.
+ *
+ * Returns liveDtrans2[pos][state] = { digit: percentage }
+ * where state = twoDrawsAgo_digit + lastDraw_digit (e.g. "74").
+ * Percentages represent P(next_digit | state) per position.
+ *
+ * @param {Array} draws - Chronological draw history (all draws)
+ * @returns {Array} 3-element array of {state → {digit → percentage}} maps
+ */
+function buildLiveDtrans2(draws) {
+  // Accumulate raw transition counts
+  const counts = Array.from({ length: 3 }, () => ({}));
+
+  for (let i = 2; i < draws.length; i++) {
+    const r2 = draws[i - 2].result;
+    const r1 = draws[i - 1].result;
+    const r0 = draws[i].result;
+    for (let p = 0; p < 3; p++) {
+      const state = r2[p] + r1[p]; // "00".."99"
+      if (!counts[p][state]) counts[p][state] = new Array(10).fill(0);
+      counts[p][state][+r0[p]]++;
+    }
+  }
+
+  // Convert counts → percentage maps
+  return counts.map(posStates => {
+    const out = {};
+    Object.entries(posStates).forEach(([state, arr]) => {
+      const tot = arr.reduce((a, b) => a + b, 0) || 1;
+      out[state] = Object.fromEntries(
+        arr.map((c, d) => [String(d), +(c / tot * 100).toFixed(2)])
+      );
+    });
+    return out;
+  });
+}
+
+/**
+ * FIX-C: Get slot positional frequency normalized to percentage scale.
+ *
+ * PROBLEM: S.slot_stats[slot].pos_freq stores percentages (~10.0)
+ *          S.pos_freq stores raw counts (~1750) — 175× difference.
+ * If slot lookup succeeds, use it (detect + normalize scale if needed).
+ * If not, normalize S.pos_freq fallback to percentages.
+ *
+ * @param {Object} S    - Dataset
+ * @param {string} slot - '2pm', '5pm', or '9pm'
+ * @returns {Array} 3-element array of {digit → percentage ~10.0}
+ */
+function getSlotPosFreqNormalized(S, slot) {
+  const raw = S.slot_stats?.[slot]?.pos_freq;
+
+  if (raw && Array.isArray(raw) && raw.length === 3) {
+    // Detect scale: percentage values are ~10, raw counts are ~1000+
+    const probe = +Object.values(raw[0])[0];
+    if (probe > 50) {
+      // Raw counts — normalize to percentages
+      return raw.map(p => {
+        const tot = Object.values(p).reduce((a, b) => a + b, 0) || 1;
+        return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v / tot * 100]));
+      });
+    }
+    return raw; // Already percentages
+  }
+
+  // Fallback to S.pos_freq — always raw counts, normalize
+  const fallback = S.pos_freq;
+  if (!fallback) {
+    // Final safety net: uniform 10% distribution
+    const uniform = Object.fromEntries(Array.from({ length: 10 }, (_, d) => [String(d), 10]));
+    return [uniform, uniform, uniform];
+  }
+  return fallback.map(p => {
+    const tot = Object.values(p).reduce((a, b) => a + b, 0) || 1;
+    return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v / tot * 100]));
+  });
+}
+
+/**
+ * Compute live digit gaps per position from a draw list.
+ * Returns gaps[position][digit] = draws since last appearance (0 = last draw).
+ * IMPORTANT: Returns Array-of-Arrays of numbers (not objects) so liveGaps.flat()
+ * yields numeric values for normalization in the scoring engine.
  */
 function computeLiveGaps(draws) {
-  // NOTE: Must return Array-of-Arrays (not Array-of-Objects) so that
-  // liveGaps.flat() in predictionEngine yields numeric values, not Objects.
   const gaps = Array.from({ length: 3 }, () => new Array(10).fill(null));
 
   for (let i = draws.length - 1; i >= 0; i--) {
@@ -58,7 +170,7 @@ function computeLiveGaps(draws) {
     if (allFilled) break;
   }
 
-  // Replace nulls with sentinel (never seen in available draws)
+  // Replace nulls: digit never seen → sentinel value = total draws
   for (let pos = 0; pos < 3; pos++) {
     for (let d = 0; d < 10; d++) {
       if (gaps[pos][d] === null) gaps[pos][d] = draws.length;
@@ -73,7 +185,7 @@ function computeLiveGaps(draws) {
  * Returns normalized percentages [0–100] indexed by digit.
  */
 function computeRecentFreq(draws, windowSize = 90) {
-  const slice = draws.slice(-windowSize);
+  const slice  = draws.slice(-windowSize);
   const counts = new Array(10).fill(0);
   slice.forEach(r => r.result.split('').forEach(d => counts[+d]++));
   const total = counts.reduce((a, b) => a + b, 0) || 1;
@@ -85,12 +197,12 @@ function computeRecentFreq(draws, windowSize = 90) {
  * Returns per-digit weight [0-1], normalized so sum = 1.
  */
 function computeDecayWeights(draws, windowSize = 30, decayHalfLife = 10) {
-  const slice = draws.slice(-windowSize);
+  const slice   = draws.slice(-windowSize);
   const weights = new Array(10).fill(0);
 
   slice.forEach((r, idx) => {
-    const age = slice.length - 1 - idx;         // 0 = most recent
-    const w = Math.pow(0.5, age / decayHalfLife); // half-life decay
+    const age = slice.length - 1 - idx; // 0 = most recent
+    const w   = Math.pow(0.5, age / decayHalfLife);
     r.result.split('').forEach(d => { weights[+d] += w; });
   });
 
@@ -99,8 +211,7 @@ function computeDecayWeights(draws, windowSize = 30, decayHalfLife = 10) {
 }
 
 /**
- * Build live combo frequency map from user draws only.
- * Base combo frequencies are pre-computed in S.base_freq.
+ * Build live combo frequency map from a draw list.
  */
 function buildLiveComboFreq(draws) {
   const freq = {};
@@ -111,8 +222,7 @@ function buildLiveComboFreq(draws) {
 }
 
 /**
- * Merge base combo frequency with live user draw frequencies.
- * base_freq values are draw counts from S.meta.total draws.
+ * Merge base combo frequency (from S.base_freq) with live draw frequencies.
  */
 function mergeComboFreq(baseFreq, liveFreq) {
   const merged = { ...baseFreq };
@@ -123,9 +233,8 @@ function mergeComboFreq(baseFreq, liveFreq) {
 }
 
 /**
- * Build augmented 1st-order Markov transition matrices from user draws.
- * Returns trans[pos][fromDigit][toDigit] = count (integers only).
- * Base matrices (S.trans_full) are already pre-computed.
+ * Build augmented 1st-order Markov transition matrices from draw list.
+ * Returns trans[pos][fromDigit][toDigit] = count.
  */
 function buildLiveTransitions(draws) {
   const trans = Array.from({ length: 3 }, () =>
@@ -145,8 +254,6 @@ function buildLiveTransitions(draws) {
 
 /**
  * Merge pre-computed base transition matrices with live augmentations.
- * baseTrans = S.trans_full (arrays of counts)
- * liveTrans = output of buildLiveTransitions
  */
 function mergeTransitions(baseTrans, liveTrans) {
   return baseTrans.map((posMatrix, pos) =>
@@ -159,6 +266,10 @@ function mergeTransitions(baseTrans, liveTrans) {
 export {
   buildDrawList,
   drawKey,
+  normalizeDOW,
+  DOW_NORM_MAP,
+  buildLiveDtrans2,
+  getSlotPosFreqNormalized,
   computeLiveGaps,
   computeRecentFreq,
   computeDecayWeights,

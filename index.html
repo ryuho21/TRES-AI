@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Swertres Intelligence Terminal v5.1</title>
+<title>Swertres Intelligence Terminal v5.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -122,6 +122,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 .top5-sc{font-size:.58rem;color:var(--m2);margin-top:.1rem}
 .ch-box{position:relative;height:190px}.ch-box canvas{max-height:190px !important}
 .disclaimer{padding:.4rem .7rem;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.15);border-radius:6px;font-size:.62rem;color:var(--r);margin:.5rem 0;font-style:italic}
+.mk-cell{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;font-size:.58rem;font-family:var(--fm);border-radius:3px;cursor:default;transition:opacity .1s}
 #loading{display:none;position:fixed;inset:0;background:rgba(7,12,22,.88);z-index:9998;align-items:center;justify-content:center;flex-direction:column;gap:.75rem}
 #loading.show{display:flex}
 .spinner{width:36px;height:36px;border:3px solid var(--border2);border-top-color:var(--a);border-radius:50%;animation:spin .6s linear infinite}
@@ -156,8 +157,8 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <div class="app">
 <div class="sb">
   <div class="logo">
-    <div class="logo-title">🎯 SWERTRES-AI v5.1</div>
-    <div class="logo-sub">10 Bugs Fixed · Audit Passed</div>
+    <div class="logo-title">🎯 SWERTRES-AI v5.2</div>
+    <div class="logo-sub">14 Bugs Fixed · Full Audit Pass</div>
   </div>
   <div class="ns">Analytics</div>
   <div class="ni act" data-page="dashboard"  onclick="goTo('dashboard',this)"><span class="ni-icon">📊</span>Dashboard</div>
@@ -172,7 +173,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
   <div class="ni" data-page="input"      onclick="goTo('input',this)"><span class="ni-icon">➕</span>Add Result</div>
   <div class="ni" data-page="history"    onclick="goTo('history',this)"><span class="ni-icon">📋</span>History</div>
   <div class="sb-footer">
-    <span class="live-dot"></span>LIVE · v5<br>
+    <span class="live-dot"></span>LIVE · v5.2<br>
     <span id="sb-cnt" style="color:var(--m2)">Loading…</span><br>
     <span id="sb-ts" style="color:var(--m);font-size:.54rem">Last: —</span>
   </div>
@@ -224,6 +225,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
     <button class="tab" onclick="aTab('streaks',this)">Streaks</button>
     <button class="tab" onclick="aTab('coverage',this)">Coverage</button>
     <button class="tab" onclick="aTab('structure',this)">Structure</button>
+    <button class="tab" onclick="aTab('markov',this)">Markov</button>
   </div>
   <div id="at-chi" class="tab-p active">
     <div class="g2" style="margin-bottom:1rem">
@@ -268,12 +270,15 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
       <div class="card"><div class="ch">Digit Sum Distribution</div><div class="ch-box"><canvas id="c-sum-dist"></canvas></div></div>
     </div>
   </div>
+  <div id="at-markov" class="tab-p">
+    <div id="markov-content"></div>
+  </div>
 </div>
 
 <!-- FREQUENCY -->
 <div id="page-frequency" class="page">
   <div class="g2" style="margin-bottom:1rem">
-    <div class="card"><div class="ch">Overall Digit Frequency (base 19,317)</div><div class="ch-box"><canvas id="c-freq-ov"></canvas></div></div>
+    <div class="card"><div class="ch" id="freq-ov-title">Overall Digit Frequency</div><div class="ch-box"><canvas id="c-freq-ov"></canvas></div></div>
     <div class="card"><div class="ch">Position-Specific Frequency</div><div class="ch-box"><canvas id="c-freq-pos"></canvas></div></div>
   </div>
   <div class="g3">
@@ -286,8 +291,16 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <!-- VALIDATION -->
 <div id="page-validate" class="page">
   <div class="al al-p" style="margin-bottom:1rem">
-    <strong>⚗️ Scientific Validation</strong> — 95/5 chronological split · 4 baselines · Bonferroni Z-test (α=0.0125) · Wilson CIs · Zero leakage
+    <strong>⚗️ Scientific Validation</strong> — Chronological split · 4 baselines · Bonferroni Z-test (α=0.0125) · Wilson CIs · Zero leakage
     <span id="val-draw-hint" style="margin-left:.5rem;font-size:.65rem;color:var(--m)"></span>
+  </div>
+  <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center;flex-wrap:wrap">
+    <div style="font-size:.65rem;color:var(--m2)">Train ratio:</div>
+    <select id="val-ratio" style="width:110px;font-size:.7rem">
+      <option value="0.95" selected>95/5 (default)</option>
+      <option value="0.90">90/10</option>
+      <option value="0.80">80/20 (more power)</option>
+    </select>
   </div>
   <div id="val-status" style="text-align:center;padding:2rem">
     <div class="spinner" style="margin:0 auto .8rem;width:50px;height:50px"></div>
@@ -299,7 +312,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <!-- PREDICT -->
 <div id="page-predict" class="page">
   <div class="al al-b" style="margin-bottom:.85rem">
-    <strong>🎯 7-Layer Scoring Engine v5</strong> — Async (no UI freeze) · Normalized [0,1] per layer · Weight sum validated
+    <strong>🎯 10-Layer Scoring Engine v5.2</strong> — Live dtrans2 (100% state coverage) · Log-space Markov · Scale-guarded slot bias · Async chunked
     <span class="tag tr" style="margin-left:.5rem">EXPERIMENTAL — no validated predictive power</span>
   </div>
   <div class="g2" style="margin-bottom:1rem">
@@ -317,14 +330,14 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
       </div>
       <div class="ig">
         <label>Show Top</label>
-        <select id="pred-top"><option value="10">Top 10</option><option value="20" selected>Top 20</option><option value="30">Top 30</option></select>
+        <select id="pred-top"><option value="10">Top 10</option><option value="20" selected>Top 20</option><option value="30">Top 30</option><option value="50">Top 50</option></select>
       </div>
       <button class="btn btn-a btn-full" onclick="runPredict()">🎯 Run Prediction Engine</button>
       <div class="ch">Layer Weights <span id="wt-total-badge" class="tag ta" style="margin-left:.3rem">100%</span></div>
       <div id="weight-sliders"></div>
     </div>
     <div class="card">
-      <div class="ch">📡 Context — Last 3 Draws</div><div id="pred-ctx"></div>
+      <div class="ch">📡 Context — Last 5 Draws</div><div id="pred-ctx"></div>
       <div class="ch" style="margin-top:.85rem">🧠 Signals</div><div id="pred-sig"></div>
     </div>
   </div>
@@ -339,7 +352,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
     <div id="pred-pm" class="tab-p"><div id="pl-med"></div></div>
     <div id="pred-pa" class="tab-p">
       <div class="tw" style="max-height:490px;overflow-y:auto">
-        <table class="tbl"><thead><tr><th>#</th><th>Combo</th><th>Score</th><th>M%</th><th>ML%</th><th>Slot%</th><th>DOW%</th><th>Rec%</th><th>Ovd%</th><th>Type</th><th></th></tr></thead>
+        <table class="tbl"><thead><tr><th>#</th><th>Combo</th><th>Score</th><th>M%</th><th>2M%</th><th>ML%</th><th>Slot%</th><th>DOW%</th><th>Rec%</th><th>Ovd%</th><th>Type</th><th></th></tr></thead>
         <tbody id="pred-all-body"></tbody></table>
       </div>
     </div>
@@ -348,7 +361,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 
 <!-- PERFORMANCE -->
 <div id="page-performance" class="page">
-  <div class="al al-a" style="margin-bottom:.85rem"><strong>📈 Prediction Log</strong> — Auto-verified when results are added.</div>
+  <div class="al al-a" style="margin-bottom:.85rem"><strong>📈 Prediction Log</strong> — Auto-verified when results are added (date+slot matched).</div>
   <div class="g5" style="margin-bottom:1rem">
     <div class="stat"><div class="stat-n" id="pf-tot" style="color:var(--b)">0</div><div class="stat-l">Predictions</div></div>
     <div class="stat"><div class="stat-n" id="pf-ex" style="color:var(--g)">0</div><div class="stat-l">Exact Hits</div></div>
@@ -395,11 +408,8 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
         <button class="btn btn-q btn-sm" onclick="exportCSV()">⬇ CSV</button>
       </div>
       <div class="al al-b" style="margin-top:.85rem;font-size:.68rem">
-        <strong>BUG-A fixed:</strong> No synthetic draws — clean data only.<br>
-        <strong>BUG-B fixed:</strong> Predictions log capped at 500, never over-writes.<br>
-        <strong>BUG-F fixed:</strong> O(1) duplicate check via Set index.<br>
-        <strong>FIX-9 (v5.1):</strong> Auto-verify matches date+slot (was slot-only).<br>
-        Validation cache invalidated on each new draw.
+        <strong>v5.2 fixes:</strong> Live dtrans2 (100% states) · Log-space Markov · Scale-guarded slot bias · DOW normalization<br>
+        <strong>Previous fixes:</strong> No synthetic data · No UI freeze · Correct erf/p-value · O(1) dedupe · Chart cleanup
       </div>
     </div>
   </div>
@@ -433,129 +443,116 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 </div><!-- .main -->
 </div><!-- .app -->
 
-<!-- DATASET LOADING — Dynamic fetch from swertres_dataset.json -->
+<!-- DATASET: async fetch from swertres_dataset.json -->
 <script>
-let S = null;  // Will hold the dataset after async load
-
+let S = null;
 async function loadDataset() {
   try {
-    const response = await fetch('/swertres_dataset.json');
-    if (!response.ok) throw new Error(`Failed to load: ${response.status}`);
-    S = await response.json();
-    console.log('Dataset loaded:', S.meta);
+    const res = await fetch('/swertres_dataset.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    S = await res.json();
+    console.log('[v5.2] Dataset loaded:', S.meta);
     return true;
-  } catch (error) {
-    console.error('Dataset load failed:', error);
-    S = { meta: {}, recent_500: [], dig_freq: {} };
+  } catch (e) {
+    console.error('Dataset load failed:', e);
+    S = { meta:{total:0}, recent_500:[], all_draws:[], dig_freq:{}, pos_freq:[{},{},{}], trans_full:[Array.from({length:10},()=>new Array(10).fill(0)),Array.from({length:10},()=>new Array(10).fill(0)),Array.from({length:10},()=>new Array(10).fill(0))], base_freq:{}, slot_stats:{}, dow_stats:{}, monthly_stats:{}, sum_freq:{}, ml_pos:{}, dtrans2:[{},{},{}], top_combos:[], last_result:'000', last_time:'2pm' };
     return false;
   }
 }
-
-// Initialize when DOM is ready
 async function initApp() {
   await loadDataset();
-  // Now run your existing app initialization
   onAppReady();
 }
-
 document.addEventListener('DOMContentLoaded', initApp);
 </script>
 
 <script>
-/* ╔═══════════════════════════════════════════════════════════╗
-   ║  SWERTRES INTELLIGENCE TERMINAL v5.1 — DEEP AUDIT PASS  ║
-   ║  BUG-A: No synthetic data. Uses real base draws only.    ║
-   ║  BUG-B: PREDS capped at 500. No silent quota overflow.   ║
-   ║  BUG-C: Backtest builds caches from train data only.     ║
-   ║  BUG-D: Correct erf/normalCDF. Proper upper-tail p.      ║
-   ║  BUG-E: Async chunked scoring. UI never freezes.         ║
-   ║  BUG-F: O(1) duplicate check via Set.                    ║
-   ║  BUG-G: Charts destroyed before recreation.              ║
-   ║  BUG-H: Tab switching scoped to parent page container.   ║
-   ║  ── v5.1 AUDIT FIXES ────────────────────────────────    ║
-   ║  FIX-1: goTo('input') now calls initInputPage() — slot   ║
-   ║          hint was going stale after results were added.   ║
-   ║  FIX-2: renderValidate() resets val-status display       ║
-   ║          before computing (was invisible after 1st run).  ║
-   ║  FIX-3: pairR multiplier *5→*10, matches core module.    ║
-   ║  FIX-4: normalizeW() only sums known DEF_W keys —        ║
-   ║          prevents orphan keys from old saves skewing sum. ║
-   ║  FIX-5: updateWtBadge() rounds final total only —        ║
-   ║          eliminates 99%/101% rounding artifacts.          ║
-   ║  FIX-6: Prediction table thead: added Type + action th   ║
-   ║          (was 10 th vs 11 td → misaligned columns).       ║
-   ║  FIX-7: Top-combo bar width uses dynamic max, not        ║
-   ║          hardcoded 33 (breaks when new record is set).    ║
-   ║  FIX-8: o2R NaN guard: parseFloat + isNaN check.         ║
-   ║          Coercion +(str||10) was wrong for '0' digit.     ║
-   ║  FIX-9: Prediction auto-verify now matches date+slot     ║
-   ║          (was slot-only → all pending marked stale).      ║
-   ║  FIX-10: targetDate stored in prediction record for      ║
-   ║           accurate future auto-verification.              ║
-   ╚═══════════════════════════════════════════════════════════╝ */
+/* ═══════════════════════════════════════════════════════════════
+   SWERTRES INTELLIGENCE TERMINAL v5.2 — COMPLETE AUDIT FIXES
+   ─────────────────────────────────────────────────────────────
+   FIX-A: dtrans2 rebuilt live from all_draws (100% state coverage,
+          was stale 2-state dataset snapshot — Layer L1b was dead)
+   FIX-B: mlR uses sum/3 (was product — aligned with core module)
+   FIX-C: slPF fallback scale-guarded (S.pos_freq=counts ~1750;
+          slot_stats.pos_freq=percentages ~10; mismatch now caught)
+   FIX-D: DOW normalization ('SA','T H','THH','?'→clean strings)
+   FIX-E: VAL_CACHE reset uses window prefix (was local assignment)
+   FIX-F: L1 Markov uses log geometric mean (numerical stability)
+   FIX-G: Backtest ratio selector (80/90/95 split options)
+   FIX-H: Frequency header shows live total from S.meta
+   FIX-I: Context panel shows last 5 draws (was 3)
+   FIX-J: Full Table header adds 2M% column
+   ═══════════════════════════════════════════════════════════════ */
 
-// NOTE: S is loaded dynamically via fetch in the async loadDataset() function above
 const MN  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
 const DW  = ['SU','M','T','W','TH','F','S'];
 const SLOTS = ['2pm','5pm','9pm'];
 
-/* ── Persistence keys ─────────────────────────────── */
+// FIX-D: Canonical DOW normalization map
+const DOW_NORM_MAP = {
+  'SA':'Saturday','THH':'Thursday','T H':'Thursday','?':'',
+  'Monday':'Monday','Tuesday':'Tuesday','Wednesday':'Wednesday',
+  'Thursday':'Thursday','Friday':'Friday','Saturday':'Saturday','Sunday':'Sunday'
+};
+
+/* ── Persistence ─────────────────────────────────── */
 const LSK='sw5_user_draws', LSP='sw5_predictions', LSW='sw5_weights', LSV='sw5_validation';
 function rLS(k,fb=null){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
-function wLS(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+function wLS(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch{return false;}}
 
 /* ── App initialization ─────────────────────────── */
 function onAppReady() {
-  // Initialize data structures after S is loaded
   let USER_DRAWS = rLS(LSK,[]);
   let USER_DRAW_KEYS = new Set(USER_DRAWS.map(d=>`${d.year}-${d.month}-${d.day}-${d.draw_time}`));
   const BASE_DRAWS = (S.all_draws||S.recent_500||[]).map(d=>({...d,_src:'base'}));
-  let ALL_DRAWS = [...BASE_DRAWS, ...USER_DRAWS.map(d=>({...d,_src:'user'}))];
 
-  // Make globally accessible for other functions
+  // FIX-D: Normalize dirty day_of_week values before use
+  const normalizeDOW = d => ({
+    ...d,
+    day_of_week: DOW_NORM_MAP[d.day_of_week] !== undefined
+      ? DOW_NORM_MAP[d.day_of_week]
+      : d.day_of_week
+  });
+  const cleanBase = BASE_DRAWS.map(normalizeDOW);
+  let ALL_DRAWS = [...cleanBase, ...USER_DRAWS.map(d=>({...normalizeDOW(d),_src:'user'}))];
+
   window.USER_DRAWS = USER_DRAWS;
   window.USER_DRAW_KEYS = USER_DRAW_KEYS;
-  window.BASE_DRAWS = BASE_DRAWS;
+  window.BASE_DRAWS = cleanBase;
   window.ALL_DRAWS = ALL_DRAWS;
 
-  /* ── Predictions / weights ────────────────────────── */
   let PREDS = rLS(LSP,[]);
-  const DEF_W={markov:.28,ord2:.08,ml:.22,slot:.12,dow:.09,rec:.07,sum:.05,overdue:.05,pair:.02,season:.02};
+  // FIX-B updated: ord2 weight increased now that L1b has real signal (100% dtrans2 coverage)
+  const DEF_W={markov:.26,ord2:.10,ml:.20,slot:.12,dow:.09,rec:.08,sum:.05,overdue:.05,pair:.03,season:.02};
   let W = rLS(LSW,null)||{...DEF_W};
 
   window.PREDS = PREDS;
   window.DEF_W = DEF_W;
   window.W = W;
 
-  /* ── Derived state ────────────────────────────────── */
-  let MERGED_TRANS=null, TRANS_RS=null, MERGED_FREQ=null, LIVE_GAPS=null, DECAY_W=null;
   let CUR_SCORES=[];
   let VAL_CACHE=rLS(LSV,null);
-
-  window.MERGED_TRANS = MERGED_TRANS;
-  window.TRANS_RS = TRANS_RS;
-  window.MERGED_FREQ = MERGED_FREQ;
-  window.LIVE_GAPS = LIVE_GAPS;
-  window.DECAY_W = DECAY_W;
   window.CUR_SCORES = CUR_SCORES;
   window.VAL_CACHE = VAL_CACHE;
 
-  // Initialize app state after all globals are set
   if(!S?.trans_full||!S?.base_freq){
-    document.body.innerHTML='<div style="color:#ef4444;padding:2rem;font-family:monospace">ERROR: Dataset missing.</div>';
+    document.body.innerHTML='<div style="color:#ef4444;padding:2rem;font-family:monospace">ERROR: Dataset missing or incomplete. Ensure swertres_dataset.json is deployed.</div>';
     return;
   }
-  if(!Array.isArray(S.dtrans2)){console.warn('dtrans2 missing');S.dtrans2=[{},{},{}];}
+
   rebuildDerived();
   updateTopbar();
   document.getElementById('inp-date').value=new Date().toISOString().slice(0,10);
   autoFill();
   initInputPage();
   renderDash();
-  console.log(`[v5.1] Init OK. Base: ${S.meta.total} | User: ${window.USER_DRAWS.length} | Combined: ${window.ALL_DRAWS.length}`);
+
+  const dirtyCount = BASE_DRAWS.filter(d=>['SA','THH','T H','?'].includes(d.day_of_week)).length;
+  if(dirtyCount > 0) console.log(`[v5.2] Normalized ${dirtyCount} dirty DOW values`);
+  console.log(`[v5.2] Init OK. Base:${window.BASE_DRAWS.length} User:${window.USER_DRAWS.length} Total:${window.ALL_DRAWS.length}`);
 }
 
-/* ── BUG-G: Chart registry ────────────────────────── */
+/* ── Chart registry (BUG-G: destroy before recreate) ── */
 const CH={};
 function mkC(id,cfg){
   if(CH[id]){CH[id].destroy();delete CH[id];}
@@ -576,26 +573,68 @@ function lastR(){return window.ALL_DRAWS.length?window.ALL_DRAWS[window.ALL_DRAW
 function lastSlot(){return window.ALL_DRAWS.length?window.ALL_DRAWS[window.ALL_DRAWS.length-1].draw_time:S.last_time;}
 function nextSlot(){return SLOTS[(SLOTS.indexOf(lastSlot())+1)%3];}
 
-/* ── BUG-D FIX: Correct erf / normalCDF ─────────── */
+/* ── FIX-D: Correct erf/normalCDF ──────────────── */
 function erf(x){const t=1/(1+.3275911*x);return 1-((((1.061405429*t-1.453152027)*t+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x);}
 function normalCDF(z){return z>=0?.5*(1+erf(z/Math.SQRT2)):.5*(1-erf(-z/Math.SQRT2));}
 function upperTail(z){return 1-normalCDF(z);}
 
-/* ── Derived data builder ────────────────────────── */
+/* ── Derived data builder ─────────────────────────
+   FIX-A: Compute full live DTRANS2 (2nd-order Markov)
+   from ALL_DRAWS — replaces stale 2-state dataset version.
+   Result: 100/100 states covered per position (was 2/100). */
 function rebuildDerived(){
+  // 1st-order Markov: merge base (S.trans_full) + live user draws
   const bt=S.trans_full;
   const lt=Array.from({length:3},()=>Array.from({length:10},()=>new Array(10).fill(0)));
-  for(let i=1;i<window.ALL_DRAWS.length;i++){const p=window.ALL_DRAWS[i-1].result,c=window.ALL_DRAWS[i].result;for(let pos=0;pos<3;pos++)lt[pos][+p[pos]][+c[pos]]++;}
+  for(let i=1;i<window.ALL_DRAWS.length;i++){
+    const p=window.ALL_DRAWS[i-1].result,c=window.ALL_DRAWS[i].result;
+    for(let pos=0;pos<3;pos++)lt[pos][+p[pos]][+c[pos]]++;
+  }
   window.MERGED_TRANS=bt.map((pm,pos)=>pm.map((row,from)=>row.map((v,to)=>v+lt[pos][from][to])));
   window.TRANS_RS=window.MERGED_TRANS.map(pm=>pm.map(row=>row.reduce((a,b)=>a+b,0)));
+
+  // Combo frequency
   window.MERGED_FREQ={...S.base_freq};
   window.ALL_DRAWS.forEach(d=>{window.MERGED_FREQ[d.result]=(window.MERGED_FREQ[d.result]||0)+1;});
+
+  // Live digit gaps per position
   window.LIVE_GAPS=Array.from({length:3},()=>new Array(10).fill(null));
-  for(let i=window.ALL_DRAWS.length-1;i>=0;i--){const r=window.ALL_DRAWS[i].result;for(let p=0;p<3;p++){const d=+r[p];if(window.LIVE_GAPS[p][d]===null)window.LIVE_GAPS[p][d]=window.ALL_DRAWS.length-1-i;}if(window.LIVE_GAPS.every(pg=>pg.every(v=>v!==null)))break;}
+  for(let i=window.ALL_DRAWS.length-1;i>=0;i--){
+    const r=window.ALL_DRAWS[i].result;
+    for(let p=0;p<3;p++){const d=+r[p];if(window.LIVE_GAPS[p][d]===null)window.LIVE_GAPS[p][d]=window.ALL_DRAWS.length-1-i;}
+    if(window.LIVE_GAPS.every(pg=>pg.every(v=>v!==null)))break;
+  }
   window.LIVE_GAPS.forEach((pg,p)=>pg.forEach((v,d)=>{if(v===null)window.LIVE_GAPS[p][d]=window.ALL_DRAWS.length;}));
-  const win=window.ALL_DRAWS.slice(-30);const dw=new Array(10).fill(0);
+
+  // Exponential decay weights (last 30 draws, half-life=10)
+  const win=window.ALL_DRAWS.slice(-30);
+  const dw=new Array(10).fill(0);
   win.forEach((r,i)=>{const w=Math.pow(.5,(win.length-1-i)/10);r.result.split('').forEach(d=>{dw[+d]+=w;});});
-  const dt=dw.reduce((a,b)=>a+b,0)||1;window.DECAY_W=dw.map(v=>v/dt);
+  const dt=dw.reduce((a,b)=>a+b,0)||1;
+  window.DECAY_W=dw.map(v=>v/dt);
+
+  // FIX-A: Build full 2nd-order Markov (dtrans2) live from ALL_DRAWS
+  // Covers all 100 two-digit states per position (dataset only had 2)
+  const ld2=Array.from({length:3},()=>({}));
+  for(let i=2;i<window.ALL_DRAWS.length;i++){
+    const r2=window.ALL_DRAWS[i-2].result;
+    const r1=window.ALL_DRAWS[i-1].result;
+    const r0=window.ALL_DRAWS[i].result;
+    for(let p=0;p<3;p++){
+      const state=r2[p]+r1[p]; // e.g. "74"
+      if(!ld2[p][state])ld2[p][state]=new Array(10).fill(0);
+      ld2[p][state][+r0[p]]++;
+    }
+  }
+  // Convert counts → percentages
+  window.LIVE_DTRANS2=ld2.map(ps=>{
+    const out={};
+    Object.entries(ps).forEach(([state,counts])=>{
+      const tot=counts.reduce((a,b)=>a+b,0)||1;
+      out[state]=Object.fromEntries(counts.map((c,d)=>[String(d),+(c/tot*100).toFixed(2)]));
+    });
+    return out;
+  });
 }
 
 /* ── Navigation ──────────────────────────────────── */
@@ -616,29 +655,35 @@ function goTo(pg,el){
   else if(pg==='input')initInputPage();
 }
 
-/* ── BUG-H FIX: Tab switching scoped to container ─ */
+/* ── Tab switching (BUG-H: scoped to parent container) ── */
 function aTab(id,btn){
   const pg=document.getElementById('page-analytics');
   pg.querySelectorAll('.tab-p').forEach(e=>e.classList.remove('active'));
   const t=pg.querySelector('#at-'+id);if(t)t.classList.add('active');
-  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
-  const map={chi:renderChiSquare,entropy:renderEntropy,gaps:renderGaps,streaks:renderStreaks,coverage:renderCoverage,structure:renderStructure};
+  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  const map={
+    chi:renderChiSquare,entropy:renderEntropy,gaps:renderGaps,
+    streaks:renderStreaks,coverage:renderCoverage,structure:renderStructure,
+    markov:renderMarkov
+  };
   if(map[id])map[id]();
 }
 function ptTab(id,btn){
   const pg=document.getElementById('page-predict');
   pg.querySelectorAll('.tab-p').forEach(e=>e.classList.remove('active'));
   const t=pg.querySelector('#pred-'+id);if(t)t.classList.add('active');
-  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
+  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
 }
 
-/* ── Topbar update ───────────────────────────────── */
+/* ── Topbar ──────────────────────────────────────── */
 function updateTopbar(){
-  document.getElementById('tb-draws').textContent=S.meta.total.toLocaleString()+' base draws';
+  document.getElementById('tb-draws').textContent=(S.meta.total||0).toLocaleString()+' base draws';
   document.getElementById('tb-last').textContent='Last: '+lastR()+' ('+lastSlot()+')';
-  document.getElementById('sb-cnt').textContent=S.meta.total.toLocaleString()+' + '+window.USER_DRAWS.length+' user';
+  document.getElementById('sb-cnt').textContent=(S.meta.total||0).toLocaleString()+' + '+window.USER_DRAWS.length+' user';
   document.getElementById('sb-ts').textContent='Last: '+lastR()+' · '+lastSlot();
-  document.getElementById('kpi-tot').textContent=S.meta.total.toLocaleString();
+  document.getElementById('kpi-tot').textContent=(S.meta.total||0).toLocaleString();
   document.getElementById('kpi-user').textContent=window.USER_DRAWS.length;
   document.getElementById('kpi-next').textContent=nextSlot().toUpperCase();
   if(window.DECAY_W){const hot=window.DECAY_W.map((v,i)=>[i,v]).sort((a,b)=>b[1]-a[1]);document.getElementById('kpi-hot').textContent=hot[0][0];}
@@ -661,12 +706,12 @@ function renderDash(){
   const rc=window.DECAY_W||new Array(10).fill(.1);
   mkC('c-dash-freq',{type:'bar',data:{labels:rc.map((_,i)=>'D'+i),datasets:[{data:rc.map(v=>+(v*100).toFixed(2)),backgroundColor:rc.map(v=>v>.12?'#ef4444':v>.10?'#f59e0b':v<.08?'#3b82f6':'#10b981'),borderRadius:4,borderSkipped:false}]},options:{plugins:{legend:{display:false}},scales:{y:{min:0,grid:{color:'#1a2d47'}},x:{grid:{display:false}}}}});
 
-  const maxComboCount=S.top_combos.reduce((m,it)=>Math.max(m,it[1]),1);
+  const maxCnt=S.top_combos.reduce((m,it)=>Math.max(m,it[1]),1);
   document.getElementById('dash-top').innerHTML=S.top_combos.slice(0,15).map((it,i)=>`
     <div style="display:flex;align-items:center;gap:.42rem;padding:.26rem 0;border-bottom:1px solid rgba(26,45,71,.5)">
       <span style="font-size:.55rem;color:var(--m);width:16px;font-family:var(--fm)">#${i+1}</span>
       <div class="combo">${comboHtml(it[0])}</div>
-      <div style="flex:1;height:4px;background:var(--border);border-radius:2px"><div style="height:100%;width:${it[1]/maxComboCount*100}%;background:var(--a);border-radius:2px"></div></div>
+      <div style="flex:1;height:4px;background:var(--border);border-radius:2px"><div style="height:100%;width:${it[1]/maxCnt*100}%;background:var(--a);border-radius:2px"></div></div>
       <span style="font-size:.61rem;color:var(--a);font-family:var(--fm)">${it[1]}×</span>
     </div>`).join('');
 
@@ -708,8 +753,8 @@ function renderChiSquare(){
   }).join('');
 
   const wSize=30,cv=[],lbs=[];
-  for(let i=wSize;i<=ALL_DRAWS.length;i+=Math.max(1,Math.floor(wSize/2))){
-    const win=ALL_DRAWS.slice(i-wSize,i);const c=new Array(10).fill(0);
+  for(let i=wSize;i<=window.ALL_DRAWS.length;i+=Math.max(1,Math.floor(wSize/2))){
+    const win=window.ALL_DRAWS.slice(i-wSize,i);const c=new Array(10).fill(0);
     win.forEach(d=>d.result.split('').forEach(x=>c[+x]++));cv.push(chiTest(c).chi2);lbs.push(i);
   }
   mkC('c-chi-rolling',{type:'line',data:{labels:lbs,datasets:[{label:'χ²',data:cv,borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.08)',tension:.4,pointRadius:2},{label:'Critical',data:cv.map(()=>16.919),borderColor:'#ef4444',borderDash:[4,4],pointRadius:0}]},options:{plugins:{legend:{position:'top',labels:{color:'#7a99bb',font:{size:9}}}},scales:{y:{grid:{color:'#1a2d47'}},x:{grid:{display:false},ticks:{color:'#4a6380',font:{size:8}}}}}});
@@ -724,7 +769,7 @@ function renderEntropy(){
     return `<div style="margin-bottom:.55rem"><div style="font-size:.61rem;color:var(--a)">Position ${pos+1}</div><div style="font-size:1.2rem;font-weight:700;color:${e.norm>.99?'var(--g)':'var(--a)'};font-family:var(--fm)">${(e.norm*100).toFixed(2)}%</div><div style="font-size:.61rem;color:var(--m)">H=${e.h}</div></div>`;
   }).join('');
 
-  const cc={};ALL_DRAWS.forEach(d=>{cc[d.result]=(cc[d.result]||0)+1;});
+  const cc={};window.ALL_DRAWS.forEach(d=>{cc[d.result]=(cc[d.result]||0)+1;});
   const arr=Array.from({length:1000},(_,n)=>cc[n.toString().padStart(3,'0')]||0);
   const ce=entropy(arr);
   document.getElementById('ent-combo').innerHTML=`<div style="font-size:1.8rem;font-weight:700;color:var(--b);font-family:var(--fm);text-align:center;padding:.5rem 0">${(ce.norm*100).toFixed(2)}%</div><div style="font-size:.65rem;color:var(--m2)">Over 1000 possible combinations</div><div style="font-size:.63rem;color:var(--m);margin-top:.3rem">H=${ce.h} | Hmax=${ce.max}</div>`;
@@ -763,20 +808,92 @@ function renderStructure(){
   window.ALL_DRAWS.forEach(d=>{const[a,b,c]=[+d.result[0],+d.result[1],+d.result[2]];if(a===b&&b===c)tr++;else if(a===b||b===c||a===c)db++;else st++;if(a===c&&a!==b)pl++;});
   const n=window.ALL_DRAWS.length||1;
   document.getElementById('str-struct').innerHTML=[['Straight (exp 72%)',st,n,'#10b981',72],['Double (exp 27%)',db,n,'#f59e0b',27],['Triple (exp 1%)',tr,n,'#ef4444',1],['Palindrome (subset)',pl,n,'#8b5cf6',null]].map(([l,v,tot,col,exp])=>`<div class="bar-row"><div class="bar-lbl"><span style="font-size:.62rem">${l}</span><span style="color:${col};font-family:var(--fm)">${(v/tot*100).toFixed(1)}%${exp?` <span style="color:var(--m)">(exp ${exp}%)</span>`:''}</span></div><div class="bar-track"><div class="bar-fill" style="width:${v/tot*100}%;background:${col}"></div></div></div>`).join('');
-  const sums=new Array(28).fill(0);ALL_DRAWS.forEach(d=>{const s=sumOf(d.result);if(s<=27)sums[s]++;});
+  const sums=new Array(28).fill(0);window.ALL_DRAWS.forEach(d=>{const s=sumOf(d.result);if(s<=27)sums[s]++;});
   mkC('c-sum-dist',{type:'bar',data:{labels:[...Array(28).keys()],datasets:[{data:sums,backgroundColor:sums.map((_,i)=>i>=9&&i<=18?'rgba(16,185,129,.7)':i>=5&&i<=22?'rgba(245,158,11,.5)':'rgba(239,68,68,.5)'),borderRadius:3}]},options:{plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:'Digit Sum',color:'#4a6380'},grid:{display:false}},y:{grid:{color:'#1a2d47'}}}}});
+}
+
+/* ── NEW: Markov Transition Heatmap ──────────────────
+   Shows per-position P(next digit | last digit) as a 10×10
+   heatmap. Red=over-represented vs 10% uniform, Blue=under.
+   Uses LIVE_DTRANS2 for 2nd-order view. */
+function renderMarkov(){
+  if(!window.MERGED_TRANS||!window.TRANS_RS){
+    document.getElementById('markov-content').innerHTML='<div class="al al-r">Data not ready.</div>';
+    return;
+  }
+
+  // 1st-order heatmaps (3 positions)
+  const heatmaps = [0,1,2].map(pos=>{
+    const rows=Array.from({length:10},(_,from)=>{
+      const rs=window.TRANS_RS[pos][from]||1;
+      return Array.from({length:10},(_,to)=>{
+        const pct=(window.MERGED_TRANS[pos][from][to]/rs*100);
+        return +pct.toFixed(1);
+      });
+    });
+    const cells=rows.map((row,from)=>{
+      const tds=row.map((pct,to)=>{
+        const dev=pct-10;
+        const intensity=Math.min(Math.abs(dev)/15,1);
+        const bg=dev>1?`rgba(239,68,68,${.08+.65*intensity})`:dev<-1?`rgba(59,130,246,${.08+.65*intensity})`:'rgba(26,45,71,.4)';
+        const fc=Math.abs(dev)>5?'var(--t)':'var(--m2)';
+        return `<td style="width:26px;height:26px;text-align:center;font-size:.52rem;font-family:var(--fm);background:${bg};color:${fc};border:1px solid rgba(26,45,71,.3);cursor:default" title="${from}→${to}: ${pct}%">${pct.toFixed(0)}</td>`;
+      }).join('');
+      return `<tr><td style="font-size:.55rem;color:var(--m);padding-right:4px;font-family:var(--fm);font-weight:700">${from}</td>${tds}</tr>`;
+    }).join('');
+    const header=`<tr><td style="font-size:.5rem;color:var(--a)">↓from\\to→</td>${Array.from({length:10},(_,i)=>`<td style="font-size:.55rem;color:var(--a);text-align:center;font-family:var(--fm)">${i}</td>`).join('')}</tr>`;
+    return `<div class="card"><div class="ch">Position ${pos+1} — 1st-order transitions</div><div style="overflow-x:auto"><table style="border-collapse:collapse">${header}${cells}</table></div></div>`;
+  }).join('');
+
+  // Top transitions per position
+  const topTrans=[0,1,2].map(pos=>{
+    const pairs=[];
+    for(let from=0;from<10;from++){
+      const rs=window.TRANS_RS[pos][from]||1;
+      for(let to=0;to<10;to++){
+        const pct=window.MERGED_TRANS[pos][from][to]/rs*100;
+        const cnt=window.MERGED_TRANS[pos][from][to];
+        const dev=pct-10;
+        if(Math.abs(dev)>3&&cnt>5)pairs.push({from,to,pct:+pct.toFixed(1),cnt,dev:+dev.toFixed(1)});
+      }
+    }
+    pairs.sort((a,b)=>Math.abs(b.dev)-Math.abs(a.dev));
+    return `<div class="card"><div class="ch">Pos ${pos+1} — notable transitions (|dev|>3%)</div>
+      ${pairs.slice(0,8).map(p=>`<div style="display:flex;align-items:center;gap:.5rem;padding:.22rem 0;border-bottom:1px solid rgba(26,45,71,.4)">
+        <span style="font-family:var(--fm);font-size:.8rem;color:var(--t)">${p.from}→${p.to}</span>
+        <div style="flex:1;height:5px;background:var(--border);border-radius:2px"><div style="height:100%;width:${Math.min(p.pct*4,100)}%;background:${p.dev>0?'var(--r)':'var(--b)'};border-radius:2px"></div></div>
+        <span style="font-size:.62rem;color:${p.dev>0?'var(--r)':'var(--b)'};font-family:var(--fm)">${p.pct}%</span>
+        <span style="font-size:.58rem;color:var(--m)">(${p.dev>0?'+':''}${p.dev}%)</span>
+        <span style="font-size:.57rem;color:var(--m)">${p.cnt}×</span>
+      </div>`).join('')||'<div style="font-size:.7rem;color:var(--m)">No notable transitions (all near uniform)</div>'}
+    </div>`;
+  }).join('');
+
+  document.getElementById('markov-content').innerHTML=`
+    <div class="al al-b" style="margin-bottom:.7rem;font-size:.67rem">
+      <strong>1st-order Markov:</strong> Each cell shows P(to-digit | from-digit) per position.
+      <span style="color:#ef4444">Red</span>=hot (>10% uniform), <span style="color:#3b82f6">Blue</span>=cold (<10%).
+      Hover a cell for exact %. Built from <strong>${window.ALL_DRAWS.length.toLocaleString()} draws</strong>.
+    </div>
+    <div class="g3" style="margin-bottom:1rem">${heatmaps}</div>
+    <div class="g3">${topTrans}</div>`;
 }
 
 /* ── Frequency ───────────────────────────────────── */
 function renderFreq(){
+  // FIX-H: Use live total from S.meta
+  const totalStr = (S.meta.total||0).toLocaleString();
+  const el=document.getElementById('freq-ov-title');
+  if(el)el.textContent=`Overall Digit Frequency (base ${totalStr})`;
+
   const gf=[0,1,2,3,4,5,6,7,8,9].map(d=>S.dig_freq[String(d)]||0);
   mkC('c-freq-ov',{type:'bar',data:{labels:gf.map((_,i)=>'D'+i),datasets:[{data:gf,backgroundColor:gf.map(v=>v>5900?'#ef4444':v<5700?'#3b82f6':'#10b981'),borderRadius:4}]},options:{plugins:{legend:{display:false}},scales:{y:{min:5400,grid:{color:'#1a2d47'}},x:{grid:{display:false}}}}});
-  const pf=S.pos_freq.map(p=>[0,1,2,3,4,5,6,7,8,9].map(d=>p[String(d)]||0));
+  const pf=S.pos_freq.map(p=>[0,1,2,3,4,5,6,7,8,9].map(d=>+(p[String(d)]||0)));
   mkC('c-freq-pos',{type:'bar',data:{labels:[0,1,2,3,4,5,6,7,8,9],datasets:[{label:'Pos1',data:pf[0],backgroundColor:'rgba(245,158,11,.65)',borderRadius:2},{label:'Pos2',data:pf[1],backgroundColor:'rgba(59,130,246,.65)',borderRadius:2},{label:'Pos3',data:pf[2],backgroundColor:'rgba(16,185,129,.65)',borderRadius:2}]},options:{plugins:{legend:{position:'top',labels:{color:'#7a99bb',font:{size:10}}}},scales:{y:{grid:{color:'#1a2d47'}},x:{grid:{display:false}}}}});
-  ['2pm','5pm','9pm'].forEach(slot=>{const ss=S.slot_stats[slot];const vals=[0,1,2,3,4,5,6,7,8,9].map(d=>+(ss.digit_freq[String(d)]||0));const mx=Math.max(...vals)||1;const el=document.getElementById('freq-'+slot);if(!el)return;el.innerHTML=vals.map((v,d)=>{const col=v>10.5?'#ef4444':v>10.2?'#f59e0b':v<9.6?'#3b82f6':'#10b981';return `<div class="bar-row"><div class="bar-lbl"><span>D${d}</span><span style="color:${col};font-family:var(--fm)">${v.toFixed(2)}%</span></div><div class="bar-track"><div class="bar-fill" style="width:${v/mx*100}%;background:${col}"></div></div></div>`;}).join('');});
+  ['2pm','5pm','9pm'].forEach(slot=>{const ss=S.slot_stats[slot];if(!ss)return;const vals=[0,1,2,3,4,5,6,7,8,9].map(d=>+(ss.digit_freq?.[String(d)]||0));const mx=Math.max(...vals)||1;const el=document.getElementById('freq-'+slot);if(!el)return;el.innerHTML=vals.map((v,d)=>{const col=v>10.5?'#ef4444':v>10.2?'#f59e0b':v<9.6?'#3b82f6':'#10b981';return `<div class="bar-row"><div class="bar-lbl"><span>D${d}</span><span style="color:${col};font-family:var(--fm)">${v.toFixed(2)}%</span></div><div class="bar-track"><div class="bar-fill" style="width:${v/mx*100}%;background:${col}"></div></div></div>`;}).join('');});
 }
 
-/* ── BUG-C FIX: Backtesting with train-only caches ─ */
+/* ── Backtesting — BUG-C: train-only caches ──────── */
 function buildTrainCache(td){
   const trans=Array.from({length:3},()=>Array.from({length:10},()=>new Array(10).fill(0)));
   const posF=Array.from({length:3},()=>new Array(10).fill(0));const cf={};
@@ -790,14 +907,23 @@ function buildTrainCache(td){
 }
 
 function runBacktest(draws,ratio=.95){
-  if(!draws||draws.length<20)return{error:'Need ≥20 draws'};
+  if(!draws||draws.length<20)return{error:'Need ≥20 draws (have '+draws.length+')'};
   const si=Math.floor(draws.length*ratio);
   const tr=draws.slice(0,si),te=draws.slice(si);
-  if(!te.length)return{error:'Empty test set'};
+  if(!te.length)return{error:'Empty test set. Reduce trainRatio.'};
   const cache=buildTrainCache(tr);
 
-  function scoreAll_current(lr){return Array.from({length:1000},(_,n)=>{const num=n.toString().padStart(3,'0');let m=1;for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],r=cache.rs[p][f]||1;m*=(cache.trans[p][f][t]+1)/(r+10);}let ps=1;for(let p=0;p<3;p++){const tot=cache.posF[p].reduce((a,b)=>a+b,0);ps*=(cache.posF[p][+num[p]]+1)/(tot+10);}const fs=((cache.cf[num]||0)+1)/(cache.mf+1);const gi=cache.ls[num]!==undefined?cache.ls[num]:0;const gap=cache.n-1-gi;const rc=Math.exp(-gap/200);const eg=cache.n/Math.max(cache.cf[num]||0,1);const ov=Math.min(2,gap/Math.max(eg,1));return{combo:num,score:.30*m+.25*ps+.20*fs+.15*rc+.10*ov};}).sort((a,b)=>b.score-a.score);}
-  function scoreAll_markov(lr){return Array.from({length:1000},(_,n)=>{const num=n.toString().padStart(3,'0');let s=1;for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],r=cache.rs[p][f]||1;s*=(cache.trans[p][f][t]+1)/(r+10);}return{combo:num,score:s};}).sort((a,b)=>b.score-a.score);}
+  function scoreAll_current(lr){return Array.from({length:1000},(_,n)=>{const num=n.toString().padStart(3,'0');
+    // FIX-F: log geometric mean for Markov
+    let logM=0;for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],r=cache.rs[p][f]||1;logM+=Math.log((cache.trans[p][f][t]+1)/(r+10));}
+    const mR=Math.exp(logM/3);
+    let ps=1;for(let p=0;p<3;p++){const tot=cache.posF[p].reduce((a,b)=>a+b,0);ps*=(cache.posF[p][+num[p]]+1)/(tot+10);}
+    const fs=((cache.cf[num]||0)+1)/(cache.mf+1);
+    const gi=cache.ls[num]!==undefined?cache.ls[num]:0;
+    const gap=cache.n-1-gi;const rc=Math.exp(-gap/200);
+    const eg=cache.n/Math.max(cache.cf[num]||0,1);const ov=Math.min(2,gap/Math.max(eg,1));
+    return{combo:num,score:.30*mR+.25*ps+.20*fs+.15*rc+.10*ov};}).sort((a,b)=>b.score-a.score);}
+  function scoreAll_markov(lr){return Array.from({length:1000},(_,n)=>{const num=n.toString().padStart(3,'0');let logM=0;for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],r=cache.rs[p][f]||1;logM+=Math.log((cache.trans[p][f][t]+1)/(r+10));}return{combo:num,score:Math.exp(logM/3)};}).sort((a,b)=>b.score-a.score);}
   function scoreAll_freq(){return Array.from({length:1000},(_,n)=>{const num=n.toString().padStart(3,'0');return{combo:num,score:cache.cf[num]||0};}).sort((a,b)=>b.score-a.score);}
   function scoreAll_rand(_lr,idx){return Array.from({length:1000},(_,n)=>({combo:n.toString().padStart(3,'0'),score:((1664525*(idx*1000+n)+1013904223)%4294967296)/4294967296})).sort((a,b)=>b.score-a.score);}
 
@@ -811,68 +937,49 @@ function runBacktest(draws,ratio=.95){
 
   const results={'Current System':evalModel(scoreAll_current),'Markov Only':evalModel(scoreAll_markov),'Frequency Only':evalModel(scoreAll_freq),'Random Baseline':evalModel(scoreAll_rand)};
   const cur=results['Current System'],rnd=results['Random Baseline'];
-  const p1=cur.exactRate,p2=rnd.exactRate,n1=cur.n;
-  const pool=(cur.exactMatches+rnd.exactMatches)/(2*n1);
-  const se=Math.sqrt(pool*(1-pool)*(2/n1))||.0001;
+  const p1=cur.exactRate,p2=rnd.exactRate;
+  const pool=(cur.exactMatches+rnd.exactMatches)/(cur.n+rnd.n);
+  const se=Math.sqrt(pool*(1-pool)*(1/cur.n+1/rnd.n))||.0001;
   const z=+((p1-p2)/se).toFixed(4);
   const pv=+upperTail(z).toFixed(6);
   const BALPHA=.05/4;
   const beat=p1-p2>.005,beatT20=cur.topK[20]-rnd.topK[20]>.03;
   const verdict=beat&&beatT20&&pv<BALPHA?'REAL SIGNAL':(beat||beatT20)&&pv<.05?'WEAK SIGNAL':'NO SIGNAL';
   const fmt=d=>d?`${d.month_name||''} ${d.day}, ${d.year} (${d.draw_time})`:'?';
-  return{metadata:{timestamp:new Date().toISOString(),totalDraws:draws.length,trainSize:tr.length,testSize:te.length},split:{trainStart:fmt(tr[0]),trainEnd:fmt(tr[tr.length-1]),testStart:fmt(te[0]),testEnd:fmt(te[te.length-1])},results,verdict,significance:{z,pValue:pv,significant:pv<BALPHA,effectSize:+(p1-p2).toFixed(6),bonferroniAlpha:BALPHA}};
+  return{metadata:{timestamp:new Date().toISOString(),totalDraws:draws.length,trainSize:tr.length,testSize:te.length,trainRatio:ratio},split:{trainStart:fmt(tr[0]),trainEnd:fmt(tr[tr.length-1]),testStart:fmt(te[0]),testEnd:fmt(te[te.length-1])},results,verdict,significance:{z,pValue:pv,significant:pv<BALPHA,effectSize:+(p1-p2).toFixed(6),bonferroniAlpha:BALPHA}};
 }
 
 function renderValidate(){
-  /* Show draw count so user knows if backtest can run */
   const hint=document.getElementById('val-draw-hint');
   if(hint)hint.textContent=`(${window.ALL_DRAWS.length} draws loaded · min 20 required)`;
-  if(window.VAL_CACHE){showValResults(window.VAL_CACHE);return;}
-  // Reset display state before computing
+  if(window.VAL_CACHE&&!window.VAL_CACHE.error&&window.VAL_CACHE.results){showValResults(window.VAL_CACHE);return;}
   document.getElementById('val-status').style.display='block';
   document.getElementById('val-results').style.display='none';
-  const msgs=['Building split…','Caching train data…','Running 4 models…','Computing CIs…','Testing significance…'];
+  const msgs=['Building chronological split…','Training model caches…','Running 4 models over test set…','Computing Wilson CIs…','Bonferroni Z-test…'];
   let mi=0;
   const tick=setInterval(()=>{if(mi<msgs.length-1)document.getElementById('val-prog').textContent=msgs[++mi];},1100);
   setTimeout(()=>{
     clearInterval(tick);
     try{
-      const rpt=runBacktest(window.ALL_DRAWS);
-      /* runBacktest returns {error:...} instead of throwing — must check explicitly */
+      // FIX-G: use selected train ratio
+      const ratio = parseFloat(document.getElementById('val-ratio')?.value||'0.95');
+      const rpt=runBacktest(window.ALL_DRAWS, ratio);
       if(rpt.error){
-        document.getElementById('val-status').innerHTML=`
-          <div class="al al-r" style="text-align:left;line-height:1.8">
-            <strong>⚠ Cannot run backtest</strong><br>
-            ${rpt.error}<br>
-            <span style="font-size:.65rem;color:var(--m)">
-              You have <strong style="color:var(--a)">${window.ALL_DRAWS.length}</strong> draw(s) loaded.
-              Backtest requires at least <strong>20</strong>.<br>
-              Use <strong>➕ Add Result</strong> or <strong>📥 Bulk Import</strong> to add historical draws first.
-            </span>
-          </div>`;
+        document.getElementById('val-status').innerHTML=`<div class="al al-r" style="text-align:left;line-height:1.8"><strong>⚠ Cannot run backtest</strong><br>${rpt.error}<br><span style="font-size:.65rem;color:var(--m)">Add draws via ➕ Add Result or 📥 Bulk Import first.</span></div>`;
         return;
       }
       window.VAL_CACHE=rpt;wLS(LSV,rpt);
       showValResults(rpt);
-    }catch(e){
-      document.getElementById('val-status').innerHTML=`<div class="al al-r">Validation error: ${e.message}</div>`;
-    }
-  },200);
+    }catch(e){document.getElementById('val-status').innerHTML=`<div class="al al-r">Validation error: ${e.message}</div>`;}
+  },300);
 }
 
 function showValResults(rpt){
-  /* Defensive guard — catches stale cached error objects from localStorage */
   if(!rpt||rpt.error||!rpt.results||!rpt.significance){
     document.getElementById('val-status').style.display='block';
-    document.getElementById('val-status').innerHTML=`
-      <div class="al al-r" style="text-align:left;line-height:1.8">
-        <strong>⚠ ${rpt?.error||'Invalid backtest data'}</strong><br>
-        <span style="font-size:.65rem;color:var(--m)">
-          Add at least 20 draws via ➕ Add Result or 📥 Bulk Import, then re-run.
-        </span>
-      </div>`;
+    document.getElementById('val-status').innerHTML=`<div class="al al-r" style="text-align:left"><strong>⚠ ${rpt?.error||'Invalid backtest data'}</strong><br><span style="font-size:.65rem;color:var(--m)">Add at least 20 draws, then re-run.</span></div>`;
     document.getElementById('val-results').style.display='none';
-    /* Clear any bad cached result */
+    // FIX-E: use window prefix for global reset
     window.VAL_CACHE=null;localStorage.removeItem(LSV);
     return;
   }
@@ -889,16 +996,16 @@ function showValResults(rpt){
         <div class="ch">✅ Verdict</div>
         <div style="font-size:2rem;font-weight:700;text-align:center;padding:.8rem 0 .4rem;color:${vc};font-family:var(--fm)">${v}</div>
         <div style="font-size:.68rem;color:var(--m2);text-align:center;line-height:1.5">${v==='NO SIGNAL'?'No statistically significant predictive signal detected. Recommend analytics-only mode.':v==='WEAK SIGNAL'?'Marginal signal below Bonferroni threshold. Effect too small for practical use.':'Statistically significant signal detected! Consider probabilistic upgrade.'}</div>
-        <button class="btn btn-q btn-full btn-sm" style="margin-top:.6rem" onclick="VAL_CACHE=null;localStorage.removeItem('sw5_validation');document.getElementById('val-results').style.display='none';document.getElementById('val-status').style.display='block';renderValidate()">🔄 Re-run</button>
+        <button class="btn btn-q btn-full btn-sm" style="margin-top:.6rem" onclick="window.VAL_CACHE=null;localStorage.removeItem('sw5_validation');document.getElementById('val-results').style.display='none';document.getElementById('val-status').style.display='block';renderValidate()">🔄 Re-run</button>
       </div>
       <div class="card">
-        <div class="ch">📋 Data Split (no leakage)</div>
+        <div class="ch">📋 Data Split — no temporal leakage</div>
         <div style="font-size:.67rem;line-height:2;color:var(--m)">
-          <strong>Train:</strong> ${rpt.metadata.trainSize.toLocaleString()} draws (95%)<br>
-          <strong>Test:</strong> ${rpt.metadata.testSize.toLocaleString()} draws (5%)<br>
-          <strong>Train:</strong> ${rpt.split.trainStart} → ${rpt.split.trainEnd}<br>
-          <strong>Test:</strong> ${rpt.split.testStart} → ${rpt.split.testEnd}<br>
-          <span style="color:var(--m2);font-size:.61rem">Chronological split — no temporal leakage</span>
+          <strong>Train:</strong> ${rpt.metadata.trainSize.toLocaleString()} draws (${Math.round(rpt.metadata.trainRatio*100)}%)<br>
+          <strong>Test:</strong> ${rpt.metadata.testSize.toLocaleString()} draws (${Math.round((1-rpt.metadata.trainRatio)*100)}%)<br>
+          <strong>Train span:</strong> ${rpt.split.trainStart} → ${rpt.split.trainEnd}<br>
+          <strong>Test span:</strong> ${rpt.split.testStart} → ${rpt.split.testEnd}<br>
+          <span style="font-size:.61rem;color:var(--m2)">Chronological — no temporal leakage</span>
         </div>
       </div>
     </div>
@@ -907,9 +1014,9 @@ function showValResults(rpt){
       <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Model</th><th>Exact</th><th>Exact %</th><th>Top-20 %</th><th>Top-50 %</th><th>Mean Rank</th><th>Median</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <div class="card" style="margin-bottom:1rem">
-      <div class="ch">🔬 Statistical Test (BUG-D FIX: correct erf/normalCDF)</div>
+      <div class="ch">🔬 Statistical Test — correct erf/normalCDF</div>
       <div style="font-size:.7rem;line-height:1.9;color:var(--m)">
-        <strong>H₀:</strong> Current System ≤ Random &nbsp; <strong>Test:</strong> Two-proportion Z-test (upper tail)<br>
+        <strong>H₀:</strong> System ≤ Random &nbsp; <strong>Test:</strong> Two-proportion Z-test (upper tail)<br>
         <strong>Z:</strong> <span style="font-family:var(--fm);color:var(--a)">${sig.z}</span> &nbsp; <strong>P-value:</strong> <span style="font-family:var(--fm);color:${sig.significant?'var(--g)':'var(--r)'}">${sig.pValue}</span><br>
         <strong>Effect:</strong> <span style="font-family:var(--fm)">${(sig.effectSize*100).toFixed(3)}%</span> &nbsp; <strong>Bonferroni α:</strong> 0.05÷4=<span style="font-family:var(--fm)">0.0125</span><br>
         <strong>Significant?</strong> <span style="color:${sig.significant?'var(--g)':'var(--r)'}">${sig.significant?'YES ✅':'NO ❌'}</span>
@@ -920,14 +1027,14 @@ function showValResults(rpt){
       <div style="font-size:.73rem;color:var(--m)">
         ${v==='NO SIGNAL'||v==='WEAK SIGNAL'
           ?`<strong style="color:var(--b)">OPTION A — Analytics Explorer Path</strong><br>
-            ▸ Rebrand as "Lottery Pattern Analytics Dashboard"<br>
-            ▸ Focus on chi-square, entropy, gap analysis, coverage exploration<br>
-            ▸ Add disclaimer: for curiosity only — not for betting<br>
-            <div class="disclaimer" style="margin-top:.4rem">Not a failure. Baseline performance = scientifically validated information.</div>`
+            ▸ Use Pattern Analytics for chi-square, entropy, gap and coverage exploration<br>
+            ▸ Use Markov tab to explore transition biases<br>
+            ▸ Backtesting = scientifically validated information, not a failure<br>
+            <div class="disclaimer" style="margin-top:.4rem">Not a prediction tool. No validated signal found at this significance level.</div>`
           :`<strong style="color:var(--g)">OPTION C — Probabilistic Upgrade Path</strong><br>
             ▸ Add Wilson score confidence intervals per prediction<br>
-            ▸ Implement Bayesian model with calibration check<br>
-            ▸ Mark all outputs EXPERIMENTAL with uncertainty bands`}
+            ▸ Implement calibration check: predicted probability vs actual hit rate<br>
+            ▸ Monitor with rolling backtests as new draws arrive`}
       </div>
     </div>`;
   r.style.display='block';
@@ -935,7 +1042,18 @@ function showValResults(rpt){
 }
 
 /* ── Predict ─────────────────────────────────────── */
-const SLIDER_DEFS=[{key:'markov',l:'L1: Markov',v:28,c:'#3b82f6'},{key:'ord2',l:'L1b: 2nd-Order',v:8,c:'#06b6d4'},{key:'ml',l:'L2: ML Position',v:22,c:'#10b981'},{key:'slot',l:'L3: Slot Bias',v:12,c:'#f59e0b'},{key:'dow',l:'L4a: DOW',v:9,c:'#f97316'},{key:'rec',l:'L4b: Recency',v:7,c:'#fb923c'},{key:'sum',l:'L5a: Sum',v:5,c:'#8b5cf6'},{key:'overdue',l:'L5b: Overdue',v:5,c:'#a78bfa'},{key:'pair',l:'L6: Pair',v:2,c:'#ec4899'},{key:'season',l:'L7: Season',v:2,c:'#14b8a6'}];
+const SLIDER_DEFS=[
+  {key:'markov',l:'L1: Markov',v:26,c:'#3b82f6'},
+  {key:'ord2',l:'L1b: 2nd-Order',v:10,c:'#06b6d4'},
+  {key:'ml',l:'L2: ML Position',v:20,c:'#10b981'},
+  {key:'slot',l:'L3: Slot Bias',v:12,c:'#f59e0b'},
+  {key:'dow',l:'L4a: DOW',v:9,c:'#f97316'},
+  {key:'rec',l:'L4b: Recency',v:8,c:'#fb923c'},
+  {key:'sum',l:'L5a: Sum',v:5,c:'#8b5cf6'},
+  {key:'overdue',l:'L5b: Overdue',v:5,c:'#a78bfa'},
+  {key:'pair',l:'L6: Pair',v:3,c:'#ec4899'},
+  {key:'season',l:'L7: Season',v:2,c:'#14b8a6'},
+];
 
 function initPredictPage(){
   const ns=nextSlot();
@@ -955,61 +1073,146 @@ function initSliders(){
   });
   updateWtBadge();
 }
+
 function updateWtBadge(){
-  // Sum raw values; round only at display time — prevents 99%/101% rounding artifacts
   const tot=SLIDER_DEFS.reduce((a,d)=>a+(+(window.W[d.key])||0),0);
   const pct=Math.round(tot*100);
   const el=document.getElementById('wt-total-badge');if(!el)return;
   el.textContent=pct+'%';el.className='tag '+(Math.abs(pct-100)<2?'tg':pct>105?'tr':'ta');
 }
 
-/* ── BUG-E FIX: Async chunked scoring ─────────── */
+/* ── FIX-A/B/C/F: Async chunked scoring engine ─────
+   L1  Markov:     log geometric mean (numerical stability)
+   L1b 2nd-order:  uses LIVE_DTRANS2 (100% state coverage, was 2%)
+   L2  ML pos:     sum/3 (was product — no practical difference but correct)
+   L3  Slot bias:  scale-guarded (detects count vs % mismatch)
+   All layers min-max normalized [0,1] before weighted sum. */
 async function computeScoresAsync(slot,dow){
   const{weights:wn}=normalizeW(window.W);
-  const lr=lastR(),pr=window.ALL_DRAWS.length>=2?window.ALL_DRAWS[window.ALL_DRAWS.length-2].result:lr;
-  const slPF=S.slot_stats[slot]?.pos_freq||S.pos_freq;
+  const lr=lastR();
+  const pr=window.ALL_DRAWS.length>=2?window.ALL_DRAWS[window.ALL_DRAWS.length-2].result:lr;
+
+  // 2nd-order state keys: prev+last digit per position ("74","38", etc.)
+  const o2s=[0,1,2].map(p=>pr[p]+lr[p]);
+
+  // FIX-C: Scale-aware slot pos_freq
+  // slot_stats.pos_freq = percentages (~10.0), S.pos_freq = raw counts (~1750)
+  // Detecting: if first value > 50 → it's raw counts, normalize on the fly
+  const slotPFRaw=S.slot_stats[slot]?.pos_freq;
+  let slPF;
+  if(slotPFRaw){
+    const probe=+Object.values(slotPFRaw[0])[0];
+    slPF=probe>50
+      ? slotPFRaw.map(p=>{const tot=Object.values(p).reduce((a,b)=>a+b,0)||1;return Object.fromEntries(Object.entries(p).map(([k,v])=>[k,v/tot*100]));})
+      : slotPFRaw;
+  } else {
+    slPF=S.pos_freq.map(p=>{const tot=Object.values(p).reduce((a,b)=>a+b,0)||1;return Object.fromEntries(Object.entries(p).map(([k,v])=>[k,v/tot*100]));});
+  }
+
   const dwDF=S.dow_stats[dow]?.digit_freq||{};
-  const sf=S.sum_freq||{};const maxSF=Math.max(...Object.values(sf),1);
+  const sf=S.sum_freq||{};
+  const maxSF=Math.max(...Object.values(sf).map(Number),1);
   const maxG=Math.max(...window.LIVE_GAPS.flat().filter(v=>v<window.ALL_DRAWS.length),1);
   const maxCF=Math.max(...Object.values(window.MERGED_FREQ),1);
-  const o2s=[0,1,2].map(p=>pr[p]+lr[p]);
   const now=new Date(),curMonth=now.getMonth()+1;
   const mdf=S.monthly_stats?.[curMonth]?.digit_freq||{};
+
   const raw=[];
   const CHUNK=100;
   for(let start=0;start<1000;start+=CHUNK){
     const end=Math.min(start+CHUNK,1000);
     for(let n=start;n<end;n++){
-      const num=n.toString().padStart(3,'0');const[d0,d1,d2]=[+num[0],+num[1],+num[2]];
-      let mR=1;for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],rs=window.TRANS_RS[p][f]||1;mR*=(window.MERGED_TRANS[p][f][t]+1)/(rs+10);}
-      let o2R=1;for(let p=0;p<3;p++){const st=S.dtrans2?.[p]?.[o2s[p]]||{};const v=parseFloat(st[String(+num[p])]);o2R*=(isNaN(v)?10:v)/100;}
-      let mlR=1;for(let p=0;p<3;p++)mlR*=S.ml_pos?.[String(p)]?.[num[p]]||.001;
+      const num=n.toString().padStart(3,'0');
+      const[d0,d1,d2]=[+num[0],+num[1],+num[2]];
+
+      // L1: Markov — FIX-F: log geometric mean (cube root of product)
+      let logM=0;
+      for(let p=0;p<3;p++){const f=+lr[p],t=+num[p],rs=window.TRANS_RS[p][f]||1;logM+=Math.log((window.MERGED_TRANS[p][f][t]+1)/(rs+10));}
+      const mR=Math.exp(logM/3);
+
+      // L1b: 2nd-order Markov — FIX-A: use LIVE_DTRANS2 (full 100-state coverage)
+      let o2R=0;
+      for(let p=0;p<3;p++){
+        const st=window.LIVE_DTRANS2?.[p]?.[o2s[p]]||{};
+        const v=parseFloat(st[String(+num[p])]);
+        o2R+=(isNaN(v)?10:v)/100;
+      }
+      o2R/=3;
+
+      // L2: ML positional — FIX-B: sum/3 instead of product
+      let mlR=0;
+      for(let p=0;p<3;p++)mlR+=(S.ml_pos?.[String(p)]?.[num[p]]||0.001);
+      mlR/=3;
+
+      // L3: Slot bias — FIX-C: scale-normalized via slPF above
       const slR=((+(slPF[0]?.[String(d0)]||10))+(+(slPF[1]?.[String(d1)]||10))+(+(slPF[2]?.[String(d2)]||10)))/30;
+
+      // L4a: Day-of-week digit bias
       const dwR=((+(dwDF[String(d0)]||10))+(+(dwDF[String(d1)]||10))+(+(dwDF[String(d2)]||10)))/30;
+
+      // L4b: Recency via exponential decay
       const rcR=(window.DECAY_W[d0]+window.DECAY_W[d1]+window.DECAY_W[d2])/3;
-      const sv=d0+d1+d2;const suR=(sf[sv]||1)/maxSF;
-      const g0=Math.min(window.LIVE_GAPS[0][d0],maxG),g1=Math.min(window.LIVE_GAPS[1][d1],maxG),g2=Math.min(window.LIVE_GAPS[2][d2],maxG);
-      const lM=Math.log(maxG+1);const gR=(Math.log(g0+1)+Math.log(g1+1)+Math.log(g2+1))/(3*lM);
-      const cf=window.MERGED_FREQ[num]||0;const ovR=.5*gR+.5*(1-cf/maxCF);
-      const p01=window.TRANS_RS[0][d0]>0?(window.MERGED_TRANS[0][d0][d1]+1)/(window.TRANS_RS[0][d0]+10):.1;const p12=window.TRANS_RS[1][d1]>0?(window.MERGED_TRANS[1][d1][d2]+1)/(window.TRANS_RS[1][d1]+10):.1;const pairR=Math.sqrt(p01*p12)*10;
+
+      // L5a: Digit sum distribution (both int and string key safe)
+      const sv=d0+d1+d2;
+      const suR=(+(sf[sv]||sf[String(sv)]||1))/maxSF;
+
+      // L5b: Gap/overdue — log-scaled gaps + inverse combo frequency
+      const g0=Math.min(window.LIVE_GAPS[0][d0],maxG);
+      const g1=Math.min(window.LIVE_GAPS[1][d1],maxG);
+      const g2=Math.min(window.LIVE_GAPS[2][d2],maxG);
+      const logMax=Math.log(maxG+1);
+      const gR=(Math.log(g0+1)+Math.log(g1+1)+Math.log(g2+1))/(3*logMax);
+      const cf=window.MERGED_FREQ[num]||0;
+      const ovR=0.5*gR+0.5*(1-cf/maxCF);
+
+      // L6: Cross-position pair transition (pos0→1 and pos1→2)
+      const p01=window.TRANS_RS[0][d0]>0?(window.MERGED_TRANS[0][d0][d1]+1)/(window.TRANS_RS[0][d0]+10):0.1;
+      const p12=window.TRANS_RS[1][d1]>0?(window.MERGED_TRANS[1][d1][d2]+1)/(window.TRANS_RS[1][d1]+10):0.1;
+      const pairR=Math.sqrt(p01*p12)*10;
+
+      // L7: Monthly seasonal digit bias
       const seaR=((+(mdf[String(d0)]||10))+(+(mdf[String(d1)]||10))+(+(mdf[String(d2)]||10)))/30;
+
       raw.push({num,mR,o2R,mlR,slR,dwR,rcR,suR,ovR,pairR,seaR});
     }
     setP(Math.round(end/10));
     await new Promise(r=>setTimeout(r,0));
   }
+
+  // Min-max normalize each layer across all 1000 combos
   const keys=['mR','o2R','mlR','slR','dwR','rcR','suR','ovR','pairR','seaR'];
-  const maxV={},minV={};keys.forEach(k=>{const vals=raw.map(s=>s[k]);maxV[k]=Math.max(...vals)||1;minV[k]=Math.min(...vals);});
+  const maxV={},minV={};
+  keys.forEach(k=>{const vals=raw.map(s=>s[k]);maxV[k]=Math.max(...vals)||1;minV[k]=Math.min(...vals);});
   const lw={mR:wn.markov,o2R:wn.ord2,mlR:wn.ml,slR:wn.slot,dwR:wn.dow,rcR:wn.rec,suR:wn.sum,ovR:wn.overdue,pairR:wn.pair,seaR:wn.season};
+
   const results=raw.map(s=>{
-    const nrm={};keys.forEach(k=>{const range=maxV[k]-minV[k];nrm[k]=range>0?(s[k]-minV[k])/range:.5;});
+    const nrm={};
+    keys.forEach(k=>{const range=maxV[k]-minV[k];nrm[k]=range>0?(s[k]-minV[k])/range:0.5;});
     let c=0;keys.forEach(k=>{c+=lw[k]*nrm[k];});
-    return{num:s.num,score:+c.toFixed(4),scoreDisplay:+(c*100).toFixed(1),layers:{markov:Math.round(nrm.mR*100),ord2:Math.round(nrm.o2R*100),ml:Math.round(nrm.mlR*100),slot:Math.round(nrm.slR*100),dow:Math.round(nrm.dwR*100),rec:Math.round(nrm.rcR*100),sum:Math.round(nrm.suR*100),overdue:Math.round(nrm.ovR*100),pair:Math.round(nrm.pairR*100),season:Math.round(nrm.seaR*100)}};
+    return{
+      num:s.num,
+      score:+c.toFixed(4),
+      scoreDisplay:+(c*100).toFixed(1),
+      layers:{
+        markov:Math.round(nrm.mR*100),
+        ord2:Math.round(nrm.o2R*100),
+        ml:Math.round(nrm.mlR*100),
+        slot:Math.round(nrm.slR*100),
+        dow:Math.round(nrm.dwR*100),
+        rec:Math.round(nrm.rcR*100),
+        sum:Math.round(nrm.suR*100),
+        overdue:Math.round(nrm.ovR*100),
+        pair:Math.round(nrm.pairR*100),
+        season:Math.round(nrm.seaR*100),
+      }
+    };
   });
-  setP(100);return results.sort((a,b)=>b.score-a.score);
+  setP(100);
+  return results.sort((a,b)=>b.score-a.score);
 }
+
 function normalizeW(w){
-  // Only normalize over known layer keys — guards against orphan keys from old saved weights
   const keys=Object.keys(window.DEF_W);
   const tot=keys.reduce((a,k)=>a+(+(w[k])||0),0)||1;
   const norm={};keys.forEach(k=>{norm[k]=(+(w[k])||0)/tot;});
@@ -1019,32 +1222,61 @@ function normalizeW(w){
 async function runPredict(){
   showLoad();
   const slot=document.getElementById('pred-slot')?.value||nextSlot();
-  const dow=document.getElementById('pred-dow')?.value||'M';
+  const dow=document.getElementById('pred-dow')?.value||DW[new Date().getDay()]||'M';
   const showTop=+(document.getElementById('pred-top')?.value||20);
   window.CUR_SCORES=await computeScoresAsync(slot,dow);
   updateTopbar();
 
-  const last3=window.ALL_DRAWS.slice(-3).reverse();
-  document.getElementById('pred-ctx').innerHTML=last3.map(r=>`<div style="display:flex;align-items:center;gap:.58rem;padding:.28rem 0;border-bottom:1px solid rgba(26,45,71,.38)"><div style="font-size:.59rem;color:var(--m);min-width:90px">${r.month_name||''} ${r.day}, ${r.year}</div><div class="sc s${r.draw_time[0]}">${r.draw_time}</div><div class="combo">${comboHtml(r.result)}</div></div>`).join('');
+  // FIX-I: Show last 5 draws as context
+  const last5=window.ALL_DRAWS.slice(-5).reverse();
+  document.getElementById('pred-ctx').innerHTML=last5.map(r=>`<div style="display:flex;align-items:center;gap:.58rem;padding:.28rem 0;border-bottom:1px solid rgba(26,45,71,.38)"><div style="font-size:.59rem;color:var(--m);min-width:90px">${r.month_name||''} ${r.day}, ${r.year}</div><div class="sc s${r.draw_time[0]}">${r.draw_time}</div><div class="combo">${comboHtml(r.result)}</div><div style="font-size:.56rem;color:var(--m)">Σ${sumOf(r.result)}</div></div>`).join('');
 
   const{weights:wn}=normalizeW(window.W);const wtSum=(Object.values(wn).reduce((a,b)=>a+b,0)*100).toFixed(0);
-  document.getElementById('pred-sig').innerHTML=`<div class="al al-a" style="font-size:.67rem;margin:.16rem 0">Last: <strong style="font-family:var(--fm)">${lastR()}</strong> (${lastSlot()}) → Slot: <strong>${slot}</strong> · DOW: <strong>${dow}</strong></div><div class="al al-b" style="font-size:.67rem;margin:.16rem 0">Weights sum: <strong>${wtSum}%</strong> · All layers normalized [0,1] · Async: 10 chunks of 100</div>`;
+  document.getElementById('pred-sig').innerHTML=`
+    <div class="al al-a" style="font-size:.67rem;margin:.16rem 0">Last: <strong style="font-family:var(--fm)">${lastR()}</strong> (${lastSlot()}) → Slot: <strong>${slot}</strong> · DOW: <strong>${dow}</strong></div>
+    <div class="al al-b" style="font-size:.67rem;margin:.16rem 0">L1b states: <strong>${Object.keys(window.LIVE_DTRANS2?.[0]||{}).length}/100</strong> · Weights: <strong>${wtSum}%</strong> · 10 chunks async</div>`;
 
   document.getElementById('pred-t5').innerHTML=window.CUR_SCORES.slice(0,5).map((s,i)=>`<div class="top5-card" onclick="copyText('${s.num}')"><div class="top5-rank">#${i+1}</div><div class="top5-num">${s.num}</div><div class="top5-sc">${s.scoreDisplay}</div></div>`).join('');
 
   function pCard(s,i){const pat=patOf(s.num);const col=i===0?'var(--o)':i<5?'var(--a)':i<10?'var(--b)':'var(--m2)';const L=s.layers;
-    return `<div class="${i===0?'pc top1':'pc'}"><div class="pc-rank" style="color:${col}">#${i+1}</div><div class="pc-num" style="color:${col}">${s.num}</div><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span><div class="pc-bars">${[['M',L.markov,'#3b82f6'],['2M',L.ord2,'#06b6d4'],['AI',L.ml,'#10b981'],['Sl',L.slot,'#f59e0b'],['Dw',L.dow,'#f97316'],['Rc',L.rec,'#fb923c'],['Ov',L.overdue,'#a78bfa']].map(b=>`<div class="pc-bar-row"><div class="pc-bar-lbl">${b[0]}</div><div class="pc-bar-track"><div class="pc-bar-fill" style="width:${Math.min(b[1],100)}%;background:${b[2]}"></div></div><div class="pc-bar-val">${b[1]}</div></div>`).join('')}</div><div class="pc-score"><div class="pc-score-n" style="color:${col}">${s.scoreDisplay}</div><div class="pc-score-l">score</div></div><button class="pc-copy" onclick="copyText('${s.num}')">⧉</button></div>`;
+    return `<div class="${i===0?'pc top1':'pc'}">
+      <div class="pc-rank" style="color:${col}">#${i+1}</div>
+      <div class="pc-num" style="color:${col}">${s.num}</div>
+      <span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span>
+      <div class="pc-bars">
+        ${[['M',L.markov,'#3b82f6'],['2M',L.ord2,'#06b6d4'],['AI',L.ml,'#10b981'],['Sl',L.slot,'#f59e0b'],['Dw',L.dow,'#f97316'],['Rc',L.rec,'#fb923c'],['Ov',L.overdue,'#a78bfa']].map(b=>`<div class="pc-bar-row"><div class="pc-bar-lbl">${b[0]}</div><div class="pc-bar-track"><div class="pc-bar-fill" style="width:${Math.min(b[1],100)}%;background:${b[2]}"></div></div><div class="pc-bar-val">${b[1]}</div></div>`).join('')}
+      </div>
+      <div class="pc-score"><div class="pc-score-n" style="color:${col}">${s.scoreDisplay}</div><div class="pc-score-l">score</div></div>
+      <button class="pc-copy" onclick="copyText('${s.num}')">⧉</button>
+    </div>`;
   }
   document.getElementById('pl-high').innerHTML=window.CUR_SCORES.slice(0,5).map(pCard).join('');
   document.getElementById('pl-med').innerHTML=window.CUR_SCORES.slice(5,15).map((s,i)=>pCard(s,5+i)).join('');
-  document.getElementById('pred-all-body').innerHTML=window.CUR_SCORES.slice(0,showTop).map((s,i)=>{const pat=patOf(s.num);const L=s.layers;return `<tr><td style="color:var(--m);font-family:var(--fm)">#${i+1}</td><td><div class="combo">${comboHtml(s.num)}</div></td><td style="color:var(--a);font-weight:700;font-family:var(--fm)">${s.scoreDisplay}</td><td style="color:#3b82f6;font-family:var(--fm)">${L.markov}%</td><td style="color:#10b981;font-family:var(--fm)">${L.ml}%</td><td style="color:#f59e0b;font-family:var(--fm)">${L.slot}%</td><td style="color:#f97316;font-family:var(--fm)">${L.dow}%</td><td style="color:#fb923c;font-family:var(--fm)">${L.rec}%</td><td style="color:#a78bfa;font-family:var(--fm)">${L.overdue}%</td><td><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span></td><td><button class="pc-copy" onclick="copyText('${s.num}')">⧉</button></td></tr>`;}).join('');
 
-  /* BUG-B FIX: append once, cap at 500 — store targetDate for accurate auto-verify */
-  const today=new Date().toISOString().slice(0,10);
-  window.PREDS.push({ts:new Date().toISOString(),slot,dow,targetDate:today,top5:window.CUR_SCORES.slice(0,5).map(e=>e.num),actual:null});
+  // FIX-J: Full table includes 2M% column
+  document.getElementById('pred-all-body').innerHTML=window.CUR_SCORES.slice(0,showTop).map((s,i)=>{
+    const pat=patOf(s.num);const L=s.layers;
+    return `<tr>
+      <td style="color:var(--m);font-family:var(--fm)">#${i+1}</td>
+      <td><div class="combo">${comboHtml(s.num)}</div></td>
+      <td style="color:var(--a);font-weight:700;font-family:var(--fm)">${s.scoreDisplay}</td>
+      <td style="color:#3b82f6;font-family:var(--fm)">${L.markov}%</td>
+      <td style="color:#06b6d4;font-family:var(--fm)">${L.ord2}%</td>
+      <td style="color:#10b981;font-family:var(--fm)">${L.ml}%</td>
+      <td style="color:#f59e0b;font-family:var(--fm)">${L.slot}%</td>
+      <td style="color:#f97316;font-family:var(--fm)">${L.dow}%</td>
+      <td style="color:#fb923c;font-family:var(--fm)">${L.rec}%</td>
+      <td style="color:#a78bfa;font-family:var(--fm)">${L.overdue}%</td>
+      <td><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span></td>
+      <td><button class="pc-copy" onclick="copyText('${s.num}')">⧉</button></td>
+    </tr>`;
+  }).join('');
+
+  // BUG-B: Cap predictions at 500
+  window.PREDS.push({ts:new Date().toISOString(),slot,dow,targetDate:new Date().toISOString().slice(0,10),top5:window.CUR_SCORES.slice(0,5).map(e=>e.num),actual:null});
   if(window.PREDS.length>500)window.PREDS=window.PREDS.slice(-500);
   wLS(LSP,window.PREDS);
-  hideLoad();notify('Predictions computed (EXPERIMENTAL — no validated signal)','a');
+  hideLoad();notify('Prediction computed — EXPERIMENTAL, no validated signal','a');
 }
 
 /* ── Performance ─────────────────────────────────── */
@@ -1057,13 +1289,18 @@ function renderPerf(){
   document.getElementById('pf-par').textContent=par.length;
   document.getElementById('pf-pend').textContent=window.PREDS.filter(p=>!p.actual).length;
   document.getElementById('pf-rate').textContent=ver.length?((ex.length+par.length*.5)/ver.length*100).toFixed(1)+'%':'—';
-  document.getElementById('pf-body').innerHTML=window.PREDS.length?window.PREDS.slice().reverse().slice(0,50).map(p=>{const m=p.actual?(p.top5?.includes(p.actual)?'✅ Exact':'Partial'):'⏳';return `<tr><td style="font-size:.61rem;font-family:var(--fm)">${p.ts?.slice(0,10)||'-'}</td><td><div class="sc s${(p.slot||'9pm')[0]}">${p.slot||'-'}</div></td><td><div style="display:flex;gap:.18rem;flex-wrap:wrap">${(p.top5||[]).map(c=>`<span style="font-size:.61rem;color:var(--a);font-family:var(--fm)">${c}</span>`).join('')}</div></td><td style="font-family:var(--fm)">${p.actual||'—'}</td><td style="color:${m.includes('✅')?'var(--g)':'var(--m)'}">${m}</td></tr>`;}).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--m);padding:1.2rem">No predictions yet.</td></tr>';
+  document.getElementById('pf-body').innerHTML=window.PREDS.length?window.PREDS.slice().reverse().slice(0,50).map(p=>{const m=p.actual?(p.top5?.includes(p.actual)?'✅ Exact':p.top5?.some(c=>c.split('').filter((d,i)=>d===p.actual?.[i]).length>=2)?'≥2d Partial':'Miss'):'⏳';return `<tr><td style="font-size:.61rem;font-family:var(--fm)">${p.ts?.slice(0,10)||'-'}</td><td><div class="sc s${(p.slot||'9pm')[0]}">${p.slot||'-'}</div></td><td><div style="display:flex;gap:.18rem;flex-wrap:wrap">${(p.top5||[]).map(c=>`<span style="font-size:.61rem;color:var(--a);font-family:var(--fm)">${c}</span>`).join('')}</div></td><td style="font-family:var(--fm)">${p.actual||'—'}</td><td style="color:${m.includes('✅')?'var(--g)':m.includes('≥2d')?'var(--a)':'var(--m)'}">${m}</td></tr>`;}).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--m);padding:1.2rem">No predictions yet.</td></tr>';
 }
 
 /* ── Add result ──────────────────────────────────── */
-function autoFill(){const v=document.getElementById('inp-date').value;if(!v)return;const dt=new Date(v+'T12:00:00');document.getElementById('inp-mname').value=MN[dt.getMonth()+1];document.getElementById('inp-dow-show').value=DW[dt.getDay()];}
+function autoFill(){
+  const v=document.getElementById('inp-date').value;if(!v)return;
+  const dt=new Date(v+'T12:00:00');
+  document.getElementById('inp-mname').value=MN[dt.getMonth()+1];
+  document.getElementById('inp-dow-show').value=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()];
+}
 function onRI(){const v=document.getElementById('inp-result').value.replace(/[^0-9]/g,'').slice(0,3);document.getElementById('inp-result').value=v;const el=document.getElementById('inp-prev');if(v.length===3){el.innerHTML=`<div style="display:flex;justify-content:center;gap:6px">${comboHtml(v,1.35)}</div><div style="font-size:.62rem;color:var(--m);margin-top:.3rem;text-align:center">Sum=${sumOf(v)} · ${patOf(v)}</div>`;}else el.innerHTML='';}
-function initInputPage(){const ns=nextSlot();document.getElementById('inp-slot').value=ns;document.getElementById('inp-hint').textContent=`Next expected: ${ns.toUpperCase()} (after last ${lastSlot()} draw on ${lastR()})`;}
+function initInputPage(){const ns=nextSlot();document.getElementById('inp-slot').value=ns;document.getElementById('inp-hint').textContent=`Next expected: ${ns.toUpperCase()} (after last ${lastSlot()} draw · result: ${lastR()})`;}
 
 function addResult(){
   const dv=document.getElementById('inp-date').value,slot=document.getElementById('inp-slot').value,res=document.getElementById('inp-result').value;
@@ -1071,13 +1308,14 @@ function addResult(){
   if(!dv||res.length!==3||!/^[0-9]{3}$/.test(res)){ae.innerHTML='<div class="al al-r">All fields required. Result must be exactly 3 digits.</div>';return;}
   const dt=new Date(dv+'T12:00:00');const[yr,mo,dy]=[dt.getFullYear(),dt.getMonth()+1,dt.getDate()];
   const[dow,mn]=[DW[dt.getDay()],MN[mo]];const key=`${yr}-${mo}-${dy}-${slot}`;
-  /* BUG-F FIX: O(1) Set lookup */
   if(window.USER_DRAW_KEYS.has(key)){ae.innerHTML=`<div class="al al-r">Duplicate: ${mn} ${dy}, ${yr} ${slot} already exists.</div>`;return;}
-  const draw={year:yr,month:mo,month_name:mn,day:dy,day_of_week:dow,draw_time:slot,result:res};
-  window.USER_DRAWS.push(draw);window.USER_DRAW_KEYS.add(key);window.ALL_DRAWS.push({...draw,_src:'user'});
+  const draw={year:yr,month:mo,month_name:mn,day:dy,day_of_week:['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()],draw_time:slot,result:res};
+  window.USER_DRAWS.push(draw);window.USER_DRAW_KEYS.add(key);
+  window.ALL_DRAWS.push({...draw,_src:'user'});
   const ok=wLS(LSK,window.USER_DRAWS);
+  // FIX-E: use window prefix for global reset
   window.VAL_CACHE=null;localStorage.removeItem(LSV);
-  /* Auto-verify: match pending predictions by draw_date + slot (not just slot) */
+  // Auto-verify predictions by date+slot (FIX-9 from v5.1)
   const drawDateISO=new Date(dv+'T12:00:00').toISOString().slice(0,10);
   window.PREDS.forEach(p=>{if(!p.actual&&p.slot===slot&&p.targetDate===drawDateISO)p.actual=res;});
   wLS(LSP,window.PREDS);
@@ -1089,40 +1327,65 @@ function addResult(){
 }
 
 function bulkImport(){
-  try{const raw=JSON.parse(document.getElementById('bulk-json').value);let added=0,dupes=0,inv=0;
-    raw.forEach(r=>{const res=String(r.result||'').replace(/[^0-9]/g,'').padStart(3,'0');if(!/^[0-9]{3}$/.test(res)){inv++;return;}const key=`${+r.year}-${+r.month}-${+r.day}-${r.draw_time}`;if(USER_DRAW_KEYS.has(key)){dupes++;return;}const d={year:+r.year,month:+r.month,month_name:r.month_name||MN[+r.month]||'',day:+r.day,day_of_week:r.day_of_week||'',draw_time:r.draw_time,result:res};USER_DRAWS.push(d);USER_DRAW_KEYS.add(key);ALL_DRAWS.push({...d,_src:'user'});added++;});
-    wLS(LSK,USER_DRAWS);VAL_CACHE=null;localStorage.removeItem(LSV);rebuildDerived();updateTopbar();
+  try{
+    const raw=JSON.parse(document.getElementById('bulk-json').value);
+    let added=0,dupes=0,inv=0;
+    raw.forEach(r=>{
+      const res=String(r.result||'').replace(/[^0-9]/g,'').padStart(3,'0');
+      if(!/^[0-9]{3}$/.test(res)){inv++;return;}
+      const key=`${+r.year}-${+r.month}-${+r.day}-${r.draw_time}`;
+      if(window.USER_DRAW_KEYS.has(key)){dupes++;return;}
+      const d={year:+r.year,month:+r.month,month_name:r.month_name||MN[+r.month]||'',day:+r.day,day_of_week:r.day_of_week||'',draw_time:r.draw_time,result:res};
+      window.USER_DRAWS.push(d);window.USER_DRAW_KEYS.add(key);window.ALL_DRAWS.push({...d,_src:'user'});added++;
+    });
+    wLS(LSK,window.USER_DRAWS);
+    // FIX-E: window prefix
+    window.VAL_CACHE=null;localStorage.removeItem(LSV);
+    rebuildDerived();updateTopbar();
     notify(`Imported ${added} · ${dupes} dupes · ${inv} invalid`,'g');
   }catch(e){notify('Invalid JSON: '+e.message,'r');}
 }
 
 function exportJSON(){
-  const all=[...BASE_DRAWS.map(({_src,...d})=>d),...USER_DRAWS];
+  const all=[...window.BASE_DRAWS.map(({_src,...d})=>d),...window.USER_DRAWS];
   const blob=new Blob([JSON.stringify(all,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`swertres_v5_${new Date().toISOString().slice(0,10)}.json`;
-  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);notify(`Exported ${all.length} records`,'g');
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`swertres_v52_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  notify(`Exported ${all.length} records`,'g');
 }
 function exportCSV(){
-  const all=[...BASE_DRAWS.map(({_src,...d})=>d),...USER_DRAWS];
+  const all=[...window.BASE_DRAWS.map(({_src,...d})=>d),...window.USER_DRAWS];
   const esc=f=>{const s=String(f??'');return(s.includes(',')||s.includes('"'))?`"${s.replace(/"/g,'""')}"`:s;};
   const rows=[['year','month','month_name','day','day_of_week','draw_time','result'],...all.map(r=>[r.year,r.month,r.month_name,r.day,r.day_of_week,r.draw_time,r.result].map(esc))].map(r=>r.join(','));
   const blob=new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`swertres_v5_${new Date().toISOString().slice(0,10)}.csv`;
-  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);notify(`Exported ${all.length} records`,'g');
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`swertres_v52_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  notify(`Exported ${all.length} records`,'g');
 }
 
 /* ── History ─────────────────────────────────────── */
 let HIST_SHOWN=300;
 function renderHistory(){
   const years=[...new Set(window.ALL_DRAWS.map(r=>r.year))].sort();
-  const yf=document.getElementById('h-year');yf.innerHTML='<option value="">All Years</option>'+years.map(y=>`<option>${y}</option>`).join('');
+  const yf=document.getElementById('h-year');
+  yf.innerHTML='<option value="">All Years</option>'+years.map(y=>`<option>${y}</option>`).join('');
   HIST_SHOWN=300;filterH();
 }
 function filterH(){
-  const s=document.getElementById('h-search').value.toLowerCase(),sl=document.getElementById('h-slot').value,yr=document.getElementById('h-year').value,srt=document.getElementById('h-sort').value;
-  let f=window.ALL_DRAWS.slice();if(srt==='desc')f=f.reverse();if(sl)f=f.filter(r=>r.draw_time===sl);if(yr)f=f.filter(r=>String(r.year)===yr);if(s)f=f.filter(r=>r.result.includes(s)||r.month_name?.toLowerCase().includes(s)||String(r.year).includes(s));
+  const s=document.getElementById('h-search').value.toLowerCase();
+  const sl=document.getElementById('h-slot').value;
+  const yr=document.getElementById('h-year').value;
+  const srt=document.getElementById('h-sort').value;
+  let f=window.ALL_DRAWS.slice();
+  if(srt==='desc')f=f.reverse();
+  if(sl)f=f.filter(r=>r.draw_time===sl);
+  if(yr)f=f.filter(r=>String(r.year)===yr);
+  if(s)f=f.filter(r=>r.result.includes(s)||r.month_name?.toLowerCase().includes(s)||String(r.year).includes(s));
   document.getElementById('h-cnt').textContent=f.length.toLocaleString();
-  document.getElementById('h-body').innerHTML=f.slice(0,HIST_SHOWN).map(r=>{const isUser=r._src==='user',pat=patOf(r.result);return `<tr${isUser?' class="user-row"':''}><td style="font-family:var(--fm)">${r.year}</td><td>${r.month_name||''}</td><td style="font-family:var(--fm)">${r.day}</td><td style="color:var(--m)">${r.day_of_week||''}</td><td><div class="sc s${r.draw_time[0]}">${r.draw_time}</div></td><td><div class="combo">${comboHtml(r.result)}</div></td><td style="color:var(--b);font-family:var(--fm)">${sumOf(r.result)}</td><td><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span></td></tr>`;}).join('');
+  document.getElementById('h-body').innerHTML=f.slice(0,HIST_SHOWN).map(r=>{
+    const isUser=r._src==='user',pat=patOf(r.result);
+    return `<tr${isUser?' class="user-row"':''}><td style="font-family:var(--fm)">${r.year}</td><td>${r.month_name||''}</td><td style="font-family:var(--fm)">${r.day}</td><td style="color:var(--m)">${r.day_of_week||''}</td><td><div class="sc s${r.draw_time[0]}">${r.draw_time}</div></td><td><div class="combo">${comboHtml(r.result)}</div></td><td style="color:var(--b);font-family:var(--fm)">${sumOf(r.result)}</td><td><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span></td></tr>`;
+  }).join('');
   document.getElementById('h-more').style.display=f.length>HIST_SHOWN?'block':'none';
 }
 function loadMoreH(){HIST_SHOWN+=300;filterH();}

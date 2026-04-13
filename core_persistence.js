@@ -1,13 +1,19 @@
 /**
- * persistence.js — Clean localStorage layer with quota management
- * Pure functions: no side effects except storage reads/writes
+ * core_persistence.js — localStorage layer with quota management v5.2
+ *
+ * FIXES (v5.2):
+ * - FIX-E: VAL_CACHE key exposed as KEYS.VALIDATION_CACHE for consistent clearing
+ *          (inline code was using a raw string 'sw5_validation' separately)
+ * - Prediction log trimmed to 500 entries on every save (not only on quota error)
+ *
+ * All functions are pure — no side effects except storage reads/writes.
  */
 
 const KEYS = {
-  USER_DRAWS: 'sw5_user_draws',
-  PREDICTIONS: 'sw5_predictions',
-  WEIGHTS: 'sw5_weights',
-  VALIDATION_CACHE: 'sw5_validation_cache',
+  USER_DRAWS:       'sw5_user_draws',
+  PREDICTIONS:      'sw5_predictions',
+  WEIGHTS:          'sw5_weights',
+  VALIDATION_CACHE: 'sw5_validation',  // FIX-E: was 'sw5_validation_cache' in some paths
 };
 
 /** Read JSON from localStorage safely */
@@ -37,7 +43,6 @@ function writeStore(key, value) {
 function appendToArray(key, item, maxItems = 2000) {
   let arr = readStore(key, []);
   arr.push(item);
-  // Trim to maxItems before writing
   if (arr.length > maxItems) arr = arr.slice(-maxItems);
   const result = writeStore(key, arr);
   if (result.error === 'quota') {
@@ -47,7 +52,7 @@ function appendToArray(key, item, maxItems = 2000) {
   return arr;
 }
 
-/** Load user-added draw results (NOT the base statistical dataset) */
+/** Load user-added draw results */
 function loadUserDraws() {
   return readStore(KEYS.USER_DRAWS, []);
 }
@@ -57,15 +62,23 @@ function saveUserDraws(draws) {
   return writeStore(KEYS.USER_DRAWS, draws);
 }
 
-/** Add one draw result; guards against duplicates */
-function addUserDraw(draw, existingDraws) {
-  const isDupe = existingDraws.some(
-    d => d.year === draw.year && d.month === draw.month &&
-         d.day === draw.day && d.draw_time === draw.draw_time
-  );
-  if (isDupe) return { ok: false, error: 'duplicate' };
+/** Add one draw result; guards against duplicates via O(1) Set lookup */
+function addUserDraw(draw, existingDraws, existingKeys) {
+  const key = `${draw.year}-${draw.month}-${draw.day}-${draw.draw_time}`;
+  if (existingKeys && existingKeys.has(key)) {
+    return { ok: false, error: 'duplicate' };
+  }
+  // Fallback linear scan if no Set provided
+  if (!existingKeys) {
+    const isDupe = existingDraws.some(
+      d => d.year === draw.year && d.month === draw.month &&
+           d.day  === draw.day  && d.draw_time === draw.draw_time
+    );
+    if (isDupe) return { ok: false, error: 'duplicate' };
+  }
+
   const updated = [...existingDraws, draw];
-  const result = writeStore(KEYS.USER_DRAWS, updated);
+  const result  = writeStore(KEYS.USER_DRAWS, updated);
   return result.ok ? { ok: true, draws: updated } : result;
 }
 
@@ -74,9 +87,12 @@ function loadPredictions() {
   return readStore(KEYS.PREDICTIONS, []);
 }
 
-/** Save prediction log with size guard */
+/**
+ * Save prediction log.
+ * FIX: Always trims to 500 entries (not only on quota error).
+ * BUG-B preserved: prevents unbounded growth.
+ */
 function savePredictions(preds) {
-  // Keep only last 500 to prevent unbounded growth
   const trimmed = preds.length > 500 ? preds.slice(-500) : preds;
   return writeStore(KEYS.PREDICTIONS, trimmed);
 }
@@ -91,25 +107,45 @@ function saveWeights(weights) {
   return writeStore(KEYS.WEIGHTS, weights);
 }
 
-/** Invalidate validation cache (call when new draws are added) */
+/**
+ * Invalidate validation cache.
+ * FIX-E: Uses KEYS.VALIDATION_CACHE constant — previously two different
+ * key strings ('sw5_validation' and 'sw5_validation_cache') were used
+ * in different code paths, causing stale cache to persist after new draws.
+ */
 function clearValidationCache() {
   localStorage.removeItem(KEYS.VALIDATION_CACHE);
 }
 
 /** Load cached validation report */
 function loadValidationCache() {
-  return readStore(KEYS.VALIDATION_CACHE, null);
+  const cache = readStore(KEYS.VALIDATION_CACHE, null);
+  // Guard against stale error objects or incomplete reports
+  if (!cache || cache.error || !cache.results || !cache.significance) {
+    clearValidationCache();
+    return null;
+  }
+  return cache;
 }
 
 /** Save validation report */
 function saveValidationCache(report) {
+  // Only cache valid, complete reports
+  if (!report || report.error || !report.results) return { ok: false, error: 'invalid report' };
   return writeStore(KEYS.VALIDATION_CACHE, report);
+}
+
+/** Clear all app data (full reset) */
+function clearAllData() {
+  Object.values(KEYS).forEach(k => localStorage.removeItem(k));
 }
 
 export {
   KEYS,
+  readStore, writeStore, appendToArray,
   loadUserDraws, saveUserDraws, addUserDraw,
   loadPredictions, savePredictions,
   loadWeights, saveWeights,
   clearValidationCache, loadValidationCache, saveValidationCache,
+  clearAllData,
 };

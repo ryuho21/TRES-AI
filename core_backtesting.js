@@ -1,33 +1,40 @@
 /**
- * backtesting.js — Rigorous chronological backtesting engine
+ * core_backtesting.js — Rigorous chronological backtesting engine v5.2
  *
- * CRITICAL DESIGN PRINCIPLES:
- * 1. Strict chronological split: test draws are ALWAYS from the future
- * 2. Model caches built ONCE from training data (BUG-B fix)
- * 3. No reference to S (global dataset) inside model predictions
- * 4. All models receive identical inputs; differences reflect model skill only
+ * FIXES (v5.2):
+ * - FIX-F: L1 Markov uses log geometric mean (numerical stability)
+ * - FIX-G: trainRatio exposed as parameter (80/90/95 options)
+ * - Fixed pooled SE formula: uses (1/n1 + 1/n2) not (2/n1) when n1 ≠ n2
+ * - scoreAll_current aligned with scoring engine (log Markov, correct mlR)
+ *
+ * PRESERVED from v5.1:
+ * - BUG-B: Model caches built ONCE from training data only (no leakage)
+ * - BUG-D: Correct erf / normalCDF / upper-tail p-value
+ * - Bonferroni correction (α = 0.05 / 4 = 0.0125)
+ * - Wilson score confidence intervals
+ * - Strict chronological split — NO shuffling
  */
 
 import { twoPropZTest, bonferroniAlpha, wilsonCI } from './core_statistics.js';
 
-const N_MODELS = 4; // For Bonferroni correction
+const N_MODELS   = 4;
 const FAMILY_ALPHA = 0.05;
-const BONF_ALPHA = bonferroniAlpha(FAMILY_ALPHA, N_MODELS); // 0.0125
+const BONF_ALPHA   = bonferroniAlpha(FAMILY_ALPHA, N_MODELS); // 0.0125
 
 /**
  * Main entry point.
  *
- * @param {Array} allDraws - Full chronological draw list (base + user)
- * @param {number} trainRatio - Fraction for training (default 0.95)
+ * @param {Array}  allDraws   - Full chronological draw list (base + user)
+ * @param {number} trainRatio - Fraction for training (0.80 / 0.90 / 0.95)
  * @returns {BacktestReport}
  */
 function runBacktest(allDraws, trainRatio = 0.95) {
   if (!allDraws || allDraws.length < 20) {
-    return { error: 'Insufficient data (need ≥ 20 draws)' };
+    return { error: `Insufficient data (need ≥ 20 draws, have ${allDraws?.length ?? 0})` };
   }
 
-  // 1. Chronological split — NO shuffling
-  const splitIdx = Math.floor(allDraws.length * trainRatio);
+  // 1. Strict chronological split — no shuffling
+  const splitIdx  = Math.floor(allDraws.length * trainRatio);
   const trainDraws = allDraws.slice(0, splitIdx);
   const testDraws  = allDraws.slice(splitIdx);
 
@@ -35,10 +42,10 @@ function runBacktest(allDraws, trainRatio = 0.95) {
     return { error: 'Test set is empty. Reduce trainRatio.' };
   }
 
-  // 2. Build model caches from training data ONLY
+  // 2. Build model caches from training data ONLY (BUG-B preserved)
   const trainCache = buildTrainCache(trainDraws);
 
-  // 3. Evaluate all models
+  // 3. Evaluate all models over test set
   const modelNames = ['Current System', 'Markov Only', 'Frequency Only', 'Random Baseline'];
   const modelFns = {
     'Current System':  makeCurrentModel(trainCache),
@@ -49,15 +56,15 @@ function runBacktest(allDraws, trainRatio = 0.95) {
 
   const results = {};
   for (const name of modelNames) {
-    results[name] = evaluateModel(modelFns[name], testDraws, trainDraws, trainCache);
+    results[name] = evaluateModel(modelFns[name], testDraws, trainDraws);
   }
 
-  // 4. Statistical tests (Bonferroni-corrected)
+  // 4. Statistical test (Bonferroni-corrected)
+  const cur = results['Current System'];
+  const rnd = results['Random Baseline'];
   const sigTest = twoPropZTest(
-    results['Current System'].exactMatches,
-    results['Current System'].n,
-    results['Random Baseline'].exactMatches,
-    results['Random Baseline'].n,
+    cur.exactMatches, cur.n,
+    rnd.exactMatches, rnd.n,
     BONF_ALPHA
   );
 
@@ -66,10 +73,10 @@ function runBacktest(allDraws, trainRatio = 0.95) {
 
   return {
     metadata: {
-      timestamp: new Date().toISOString(),
+      timestamp:  new Date().toISOString(),
       totalDraws: allDraws.length,
-      trainSize: trainDraws.length,
-      testSize: testDraws.length,
+      trainSize:  trainDraws.length,
+      testSize:   testDraws.length,
       trainRatio,
       bonferroniAlpha: BONF_ALPHA,
     },
@@ -87,16 +94,18 @@ function runBacktest(allDraws, trainRatio = 0.95) {
   };
 }
 
-/** Pre-build all caches from training data — called ONCE */
+/**
+ * Pre-build all caches from training data — called ONCE.
+ * No access to global draws inside model scoring functions.
+ */
 function buildTrainCache(trainDraws) {
-  // 1st-order Markov matrices
-  const trans = Array.from({ length: 3 }, () =>
+  const trans    = Array.from({ length: 3 }, () =>
     Array.from({ length: 10 }, () => new Array(10).fill(0))
   );
-  const posFreq = Array.from({ length: 3 }, () => new Array(10).fill(0));
+  const posFreq  = Array.from({ length: 3 }, () => new Array(10).fill(0));
   const comboFreq = {};
 
-  trainDraws.forEach((d, idx) => {
+  trainDraws.forEach(d => {
     comboFreq[d.result] = (comboFreq[d.result] || 0) + 1;
     for (let p = 0; p < 3; p++) posFreq[p][+d.result[p]]++;
   });
@@ -109,41 +118,41 @@ function buildTrainCache(trainDraws) {
     }
   }
 
-  // Row sums for probability normalization
   const transRowSums = trans.map(posMatrix =>
     posMatrix.map(row => row.reduce((a, b) => a + b, 0))
   );
 
-  // Last-appearance index for gap/recency
   const lastSeen = {};
   trainDraws.forEach((d, idx) => { lastSeen[d.result] = idx; });
 
-  const totalDraws = trainDraws.length;
-  const maxComboFreq = Math.max(...Object.values(comboFreq), 1);
+  const totalDraws    = trainDraws.length;
+  const maxComboFreq  = Math.max(...Object.values(comboFreq), 1);
 
   return { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq };
 }
 
-/** Score all 1000 combos with the current multi-layer system */
+/**
+ * Current multi-layer system — mirrors scoring engine logic.
+ * FIX-F: Log geometric mean for Markov (numerical stability).
+ */
 function makeCurrentModel(cache) {
   const { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq } = cache;
 
   return function scoreAll(lastResult) {
-    const scores = [];
-
-    for (let n = 0; n < 1000; n++) {
+    return Array.from({ length: 1000 }, (_, n) => {
       const num = n.toString().padStart(3, '0');
 
-      // L1: 1st-order Markov joint probability
-      let mScore = 1.0;
+      // L1: log geometric mean of per-position Markov probabilities
+      let logM = 0;
       for (let p = 0; p < 3; p++) {
         const from = +lastResult[p], to = +num[p];
-        const rowSum = transRowSums[p][from];
-        mScore *= rowSum > 0 ? (trans[p][from][to] + 1) / (rowSum + 10) : 0.1;
+        const rowSum = transRowSums[p][from] || 1;
+        logM += Math.log((trans[p][from][to] + 1) / (rowSum + 10));
       }
+      const mScore = Math.exp(logM / 3);
 
       // L2: Positional digit frequency (Laplace-smoothed)
-      let posScore = 1.0;
+      let posScore = 1;
       for (let p = 0; p < 3; p++) {
         const total = posFreq[p].reduce((a, b) => a + b, 0);
         posScore *= (posFreq[p][+num[p]] + 1) / (total + 10);
@@ -152,38 +161,38 @@ function makeCurrentModel(cache) {
       // L3: Historical combo frequency
       const freqScore = ((comboFreq[num] || 0) + 1) / (maxComboFreq + 1);
 
-      // L4: Recency — exponential decay (half-life = 200 draws)
+      // L4: Recency — exponential decay (half-life 200 draws)
       const lastIdx = lastSeen[num] !== undefined ? lastSeen[num] : 0;
-      const gap = totalDraws - 1 - lastIdx;
+      const gap     = totalDraws - 1 - lastIdx;
       const recency = Math.exp(-gap / 200);
 
       // L5: Overdue boost
       const expectedGap = totalDraws / Math.max(comboFreq[num] || 0, 1);
-      const overdue = Math.min(2.0, gap / Math.max(expectedGap, 1));
+      const overdue     = Math.min(2.0, gap / Math.max(expectedGap, 1));
 
-      // Weighted blend
       const score = 0.30 * mScore + 0.25 * posScore + 0.20 * freqScore +
                     0.15 * recency + 0.10 * overdue;
 
-      scores.push({ combo: num, score });
-    }
-
-    return scores.sort((a, b) => b.score - a.score);
+      return { combo: num, score };
+    }).sort((a, b) => b.score - a.score);
   };
 }
 
+/**
+ * Markov-only baseline. FIX-F: log geometric mean.
+ */
 function makeMarkovModel(cache) {
   const { trans, transRowSums } = cache;
   return function scoreAll(lastResult) {
     return Array.from({ length: 1000 }, (_, n) => {
       const num = n.toString().padStart(3, '0');
-      let score = 1.0;
+      let logM = 0;
       for (let p = 0; p < 3; p++) {
         const from = +lastResult[p], to = +num[p];
-        const rowSum = transRowSums[p][from];
-        score *= rowSum > 0 ? (trans[p][from][to] + 1) / (rowSum + 10) : 0.1;
+        const rowSum = transRowSums[p][from] || 1;
+        logM += Math.log((trans[p][from][to] + 1) / (rowSum + 10));
       }
-      return { combo: num, score };
+      return { combo: num, score: Math.exp(logM / 3) };
     }).sort((a, b) => b.score - a.score);
   };
 }
@@ -198,28 +207,27 @@ function makeFrequencyModel(cache) {
   };
 }
 
+/**
+ * Random baseline using seeded LCG for reproducibility.
+ * Same seed per draw index → same rankings across re-runs.
+ */
 function makeRandomModel() {
-  // Deterministic per test draw: use draw index as seed for reproducibility
   return function scoreAll(lastResult, drawIdx) {
-    // Seeded shuffle using draw index for reproducibility
-    const arr = Array.from({ length: 1000 }, (_, n) => ({
+    return Array.from({ length: 1000 }, (_, n) => ({
       combo: n.toString().padStart(3, '0'),
       score: lcgRand(drawIdx * 1000 + n),
-    }));
-    return arr.sort((a, b) => b.score - a.score);
+    })).sort((a, b) => b.score - a.score);
   };
 }
 
-/** Linear congruential generator for reproducible random baseline */
+/** Linear congruential generator — reproducible random baseline */
 function lcgRand(seed) {
   const a = 1664525, c = 1013904223, m = 2 ** 32;
   return ((a * seed + c) % m) / m;
 }
 
-/** Evaluate one model over all test draws */
-function evaluateModel(scoreFn, testDraws, trainDraws, cache) {
-  // Build rolling train context: starts at end of trainDraws, grows with each test draw
-  let rollingTrain = [...trainDraws];
+/** Evaluate one model over the test set, rolling context forward */
+function evaluateModel(scoreFn, testDraws, trainDraws) {
   let lastResult = trainDraws[trainDraws.length - 1].result;
 
   const metrics = {
@@ -231,24 +239,20 @@ function evaluateModel(scoreFn, testDraws, trainDraws, cache) {
 
   testDraws.forEach((testDraw, idx) => {
     metrics.predictions++;
-    const actual = testDraw.result.padStart(3, '0');
+    const actual = String(testDraw.result).padStart(3, '0');
 
-    // Score using last known result
     const ranked = scoreFn(lastResult, idx);
-
     if (!Array.isArray(ranked) || ranked.length === 0) return;
 
     const rank = ranked.findIndex(p => p.combo === actual);
-
     if (rank >= 0) {
-      metrics.ranks.push(rank + 1); // 1-indexed
+      metrics.ranks.push(rank + 1);
       if (rank === 0) metrics.exact++;
       for (const k of [1, 5, 10, 20, 50, 100]) {
         if (rank < k) metrics.topKCounts[k]++;
       }
     }
 
-    // Advance context
     lastResult = actual;
   });
 
@@ -256,37 +260,29 @@ function evaluateModel(scoreFn, testDraws, trainDraws, cache) {
 }
 
 function computeFinalMetrics(metrics) {
-  const n = metrics.predictions;
+  const n     = metrics.predictions;
   const exact = metrics.exact;
   const exactRate = n > 0 ? exact / n : 0;
 
-  // Wilson 95% CI (using Bonferroni-corrected alpha)
   const ci = wilsonCI(exact, n, BONF_ALPHA);
 
-  // Top-K rates and CIs
-  const topK = {};
+  const topK   = {};
   const topKCI = {};
   for (const k of [1, 5, 10, 20, 50, 100]) {
     const kExact = metrics.topKCounts[k] || 0;
-    topK[k] = n > 0 ? kExact / n : 0;
+    topK[k]   = n > 0 ? kExact / n : 0;
     topKCI[k] = wilsonCI(kExact, n, BONF_ALPHA);
   }
 
   const sortedRanks = [...metrics.ranks].sort((a, b) => a - b);
-  const medianRank = sortedRanks.length > 0
+  const medianRank  = sortedRanks.length > 0
     ? sortedRanks[Math.floor(sortedRanks.length / 2)]
     : 500;
   const meanRank = sortedRanks.length > 0
     ? sortedRanks.reduce((a, b) => a + b, 0) / sortedRanks.length
     : 500;
 
-  return {
-    n, exactMatches: exact, exactRate,
-    exactCI: ci,
-    topK, topKCI,
-    meanRank: +meanRank.toFixed(1),
-    medianRank,
-  };
+  return { n, exactMatches: exact, exactRate, exactCI: ci, topK, topKCI, meanRank: +meanRank.toFixed(1), medianRank };
 }
 
 function determineVerdict(results, sigTest) {
@@ -294,26 +290,27 @@ function determineVerdict(results, sigTest) {
   const rnd = results['Random Baseline'];
   if (!cur || !rnd) return 'UNKNOWN';
 
-  const beatsByExact   = cur.exactRate - rnd.exactRate > 0.005;
-  const beatsByTop20   = cur.topK[20]  - rnd.topK[20]  > 0.03;
-  const statSignificant = sigTest.significant;
+  const beatsByExact = cur.exactRate - rnd.exactRate > 0.005;
+  const beatsByTop20 = cur.topK[20]  - rnd.topK[20]  > 0.03;
+  const statSig      = sigTest.significant;
 
-  if (beatsByExact && beatsByTop20 && statSignificant) return 'REAL SIGNAL';
+  if (beatsByExact && beatsByTop20 && statSig) return 'REAL SIGNAL';
   if ((beatsByExact || beatsByTop20) && sigTest.pValue < 0.05) return 'WEAK SIGNAL';
   return 'NO SIGNAL';
 }
 
 function getInterpretation(verdict, sig, results) {
-  const cur = results['Current System'];
-  const rnd = results['Random Baseline'];
+  const cur    = results['Current System'];
+  const rnd    = results['Random Baseline'];
   const effect = (sig.effectSize * 100).toFixed(3);
-  const top20diff = cur && rnd
-    ? ((cur.topK[20] - rnd.topK[20]) * 100).toFixed(2) : '?';
+  const top20diff = (cur && rnd)
+    ? ((cur.topK[20] - rnd.topK[20]) * 100).toFixed(2)
+    : '?';
 
-  const base = `Effect size: ${effect}% exact-match difference. Top-20 improvement: ${top20diff}%. P-value: ${sig.pValue.toFixed(4)} (Bonferroni α=${BONF_ALPHA}).`;
+  const base = `Effect: ${effect}% exact-match difference. Top-20 improvement: ${top20diff}%. P-value: ${sig.pValue.toFixed(4)} (Bonferroni α=${BONF_ALPHA}).`;
 
-  if (verdict === 'REAL SIGNAL') return `Statistically significant predictive signal detected. ${base} Proceed to probabilistic upgrade (Option C).`;
-  if (verdict === 'WEAK SIGNAL') return `Marginal signal detected but below Bonferroni threshold. ${base} Effect size too small for practical use.`;
+  if (verdict === 'REAL SIGNAL')  return `Statistically significant predictive signal detected. ${base} Proceed to probabilistic upgrade (Option C).`;
+  if (verdict === 'WEAK SIGNAL')  return `Marginal signal detected but below Bonferroni threshold. ${base} Effect size too small for practical use.`;
   return `No statistically significant predictive signal. ${base} Recommend analytics-only mode (Option A).`;
 }
 
@@ -322,8 +319,8 @@ function getRecommendation(verdict) {
     path: 'OPTION C — Probabilistic Upgrade',
     actions: [
       'Add Wilson score confidence intervals per prediction',
-      'Implement Bayesian model (Logistic Regression or XGBoost)',
-      'Calibrate: check if predicted probability matches actual hit rate',
+      'Implement calibrated Bayesian model (Logistic Regression or XGBoost)',
+      'Calibrate: verify predicted probability matches actual hit rate',
       'Monitor with rolling backtests as new draws arrive',
       'Mark all outputs EXPERIMENTAL with uncertainty bands',
     ],
@@ -332,10 +329,10 @@ function getRecommendation(verdict) {
   return {
     path: 'OPTION A — Analytics Explorer',
     actions: [
-      'Rebrand as "Lottery Pattern Analytics Dashboard" (NOT a predictor)',
-      'Expose chi-square bias detection and entropy analysis',
+      'Rebrand as "Lottery Pattern Analytics Dashboard" (not a predictor)',
+      'Expose chi-square bias detection, entropy analysis, Markov heatmaps',
       'Show gap/streak/coverage analytics with clear disclaimers',
-      'Disable or hide "Predict Next" feature, or add prominent disclaimer',
+      'Disable or clearly disclaim the "Predict Next" feature',
       'Use for pattern curiosity and historical exploration only',
     ],
   };
@@ -346,4 +343,4 @@ function formatDraw(d) {
   return `${d.month_name || ''} ${d.day || ''}, ${d.year || ''} (${d.draw_time || ''})`;
 }
 
-export { runBacktest, BONF_ALPHA };
+export { runBacktest, buildTrainCache, BONF_ALPHA };
