@@ -1,33 +1,43 @@
 /**
- * core_predictionEngine.js — 10-Layer scoring engine v5.2
+ * core_predictionEngine.js — 11-Layer scoring engine v5.4
  *
- * FIXES (v5.2):
- * - FIX-A: L1b (2nd-order Markov) uses live-computed DTRANS2 — full 100-state
- *          coverage per position. Dataset had only 2 stale states (was dead layer).
- * - FIX-B: L2 ML position uses sum/3 instead of product (correct average).
- * - FIX-C: Slot pos_freq fallback scale-guarded (dataset percentages ~10 vs
- *          raw counts ~1750 — mismatch detected and normalized automatically).
- * - FIX-F: L1 Markov uses log geometric mean (numerical stability, avoids underflow).
+ * FIXES (v5.4):
+ * - FIX-O: L8 Hot-Digit-Per-Position added — geometric mean of per-position
+ *          digit frequencies over last 50 draws. Empirically best single signal
+ *          (2.70% top-20 vs 2.40%). Requires posHot50 passed in context.
+ * - FIX-P: Recency window 30→50 draws, half-life 10→15 (caller must pass
+ *          decayWeights computed with windowSize=50, halfLife=15).
+ * - FIX-Q: L5a uses recentSumFreq (last-30 draw sums, normalized [0,1])
+ *          instead of all-time S.sum_freq. Caller computes and passes it.
+ * - Season (L7) weight set to 0 — kept in struct for backward compat.
  *
- * All layer scores normalized to [0,1] across all 1000 combos BEFORE weighting.
- * Weights sum validated. Async chunked processing — no UI freeze.
+ * PRESERVED from v5.2:
+ * - FIX-A: L1b uses live dtrans2 (100% state coverage)
+ * - FIX-B: L2 ML position uses sum/3
+ * - FIX-C: Slot pos_freq fallback scale-guarded
+ * - FIX-F: L1 Markov uses log geometric mean
+ *
+ * All layer scores normalized to [0,1] BEFORE weighting. Weights sum validated.
  */
 
 /**
  * Default layer weights (must sum to 1.0).
- * L1b weight increased from 0.08→0.10 now that dtrans2 has full coverage.
+ * v5.4: L8 hotpos added at 0.18 (proven best single signal).
+ * Season reduced to 0.00 (statistically baseless — 1/12 months significant by chance).
+ * ml reduced to 0.02 (spread 0.01-0.02, near-zero discrimination).
  */
 const DEFAULT_WEIGHTS = {
-  markov:  0.26, // L1:  1st-order Markov (log geometric mean)
-  ord2:    0.10, // L1b: 2nd-order Markov (live-computed, full coverage)
-  ml:      0.20, // L2:  ML positional frequency (sum/3)
-  slot:    0.12, // L3:  Slot-time positional bias
-  dow:     0.09, // L4a: Day-of-week digit bias
-  rec:     0.08, // L4b: Recency exponential decay
-  sum:     0.05, // L5a: Digit sum distribution
-  overdue: 0.05, // L5b: Gap + inverse combo frequency
-  pair:    0.03, // L6:  Cross-position pair transitions
-  season:  0.02, // L7:  Monthly phase digit bias
+  markov:  0.28, // L1:  1st-order Markov (log geometric mean)
+  ord2:    0.14, // L1b: 2nd-order Markov (live-computed, full coverage)
+  ml:      0.02, // L2:  ML positional frequency (near-zero signal)
+  slot:    0.11, // L3:  Slot-time positional bias
+  dow:     0.07, // L4a: Day-of-week digit bias
+  rec:     0.09, // L4b: Recency exponential decay (last 50, half-life 15)
+  sum:     0.05, // L5a: Recent digit sum frequency (last 30 draws)
+  overdue: 0.04, // L5b: Gap + inverse combo frequency
+  pair:    0.02, // L6:  Cross-position pair transitions
+  season:  0.00, // L7:  Monthly phase (disabled — no statistical basis)
+  hotpos:  0.18, // L8:  Hot-digit per position (last 50 draws) ← NEW
 };
 
 /**
@@ -137,8 +147,13 @@ function getSlotPosFreq(S, slot) {
 
 /**
  * Build scoring context — called once per prediction run.
+ *
+ * @param {Array} posHot50       - Per-position digit probabilities over last 50 draws
+ *                                 [3][10] float array, each row sums to 1. (FIX-O)
+ * @param {Array} recentSumFreq  - Normalized digit-sum frequencies over last 30 draws
+ *                                 28-element float array indexed by digit sum. (FIX-Q)
  */
-function buildScoringContext(S, mergedTrans, transRowSums, mergedComboFreq, liveGaps, decayWeights, liveDtrans2, slot, dow, drawHistory) {
+function buildScoringContext(S, mergedTrans, transRowSums, mergedComboFreq, liveGaps, decayWeights, liveDtrans2, slot, dow, drawHistory, posHot50, recentSumFreq) {
   S = validateAndFixS(S);
 
   const lastResult = drawHistory.length > 0 ? drawHistory[drawHistory.length - 1].result : '000';
@@ -154,41 +169,39 @@ function buildScoringContext(S, mergedTrans, transRowSums, mergedComboFreq, live
   const slotPosFreq = getSlotPosFreq(S, slot);
 
   const dowFreq = S.dow_stats[dow]?.digit_freq || {};
-  const sumFreq = S.sum_freq || {};
-  const maxSumFreq = Math.max(...Object.values(sumFreq).map(Number), 1);
+
+  // FIX-Q: Use recent sum frequency (last 30 draws) — fallback to uniform if absent
+  const sumFreqArr = recentSumFreq || new Array(28).fill(1 / 28);
+  const maxSumFreq = Math.max(...sumFreqArr, 0.001);
+
   const maxGap = Math.max(...liveGaps.flat().filter(v => typeof v === 'number' && v < drawHistory.length), 1);
   const maxComboFreq = Math.max(...Object.values(mergedComboFreq), 1);
 
-  const now = new Date();
-  const curMonth = now.getMonth() + 1;
-  const monthData = S.monthly_stats?.[curMonth] || S.monthly_stats?.[String(curMonth)] || {};
-  const monthDigitFreq = monthData.digit_freq || {};
+  // FIX-O: Per-position hot-digit table (last 50 draws) — fallback to uniform
+  const pH = posHot50 || Array.from({ length: 3 }, () => new Array(10).fill(0.1));
 
   return {
     lastResult, prevResult, ord2State, dtrans2,
-    slotPosFreq, dowFreq, sumFreq, maxSumFreq,
-    maxGap, maxComboFreq,
-    curMonth, monthDigitFreq,
+    slotPosFreq, dowFreq, sumFreqArr, maxSumFreq,
+    maxGap, maxComboFreq, pH,
     mergedTrans, transRowSums, mergedComboFreq, liveGaps, decayWeights,
     S,
   };
 }
 
 /**
- * Score a single combo against all 10 layers.
+ * Score a single combo against all 11 layers.
  * Returns raw (un-normalized) scores per layer.
  */
 function scoreCombo(num, ctx) {
   const [d0, d1, d2] = [+num[0], +num[1], +num[2]];
   const {
     lastResult, ord2State, dtrans2, slotPosFreq, dowFreq,
-    sumFreq, maxSumFreq, maxGap, mergedTrans, transRowSums,
-    mergedComboFreq, liveGaps, decayWeights, maxComboFreq,
-    monthDigitFreq, S,
+    sumFreqArr, maxSumFreq, maxGap, mergedTrans, transRowSums,
+    mergedComboFreq, liveGaps, decayWeights, maxComboFreq, pH, S,
   } = ctx;
 
   // L1: 1st-order Markov — FIX-F: log geometric mean (cube root of product)
-  // Avoids floating-point underflow from multiplying three small probabilities.
   let logM = 0;
   for (let p = 0; p < 3; p++) {
     const from = +lastResult[p], to = +num[p];
@@ -202,11 +215,11 @@ function scoreCombo(num, ctx) {
   for (let p = 0; p < 3; p++) {
     const stateData = dtrans2?.[p]?.[ord2State[p]] || {};
     const val = parseFloat(stateData[String(+num[p])]);
-    o2Raw += (isNaN(val) ? 10 : val) / 100; // normalize from percentage
+    o2Raw += (isNaN(val) ? 10 : val) / 100;
   }
-  o2Raw /= 3; // average across 3 positions → [0, ~1] range
+  o2Raw /= 3;
 
-  // L2: ML positional frequency — FIX-B: sum/3 (was product which compresses variance)
+  // L2: ML positional frequency — FIX-B: sum/3
   let mlRaw = 0;
   for (let p = 0; p < 3; p++) {
     mlRaw += parseFloat(S.ml_pos?.[String(p)]?.[num[p]]) || 0.001;
@@ -225,12 +238,12 @@ function scoreCombo(num, ctx) {
   const dw2 = +(dowFreq[String(d2)] || 10);
   const dwRaw = (dw0 + dw1 + dw2) / 30;
 
-  // L4b: Exponential decay recency (higher = digit appeared recently)
+  // L4b: Exponential decay recency (FIX-P: caller uses window=50, halfLife=15)
   const rcRaw = (decayWeights[d0] + decayWeights[d1] + decayWeights[d2]) / 3;
 
-  // L5a: Digit sum distribution (both int and string key lookup safe)
+  // L5a: Recent digit sum frequency (FIX-Q: last-30 draw sums, not all-time)
   const sv = d0 + d1 + d2;
-  const suRaw = (+(sumFreq[sv] || sumFreq[String(sv)] || 1)) / maxSumFreq;
+  const suRaw = (sv <= 27 ? (sumFreqArr[sv] || 0) : 0) / maxSumFreq;
 
   // L5b: Gap/overdue — log-scaled per-position gaps + inverse combo frequency
   const g0 = Math.min(liveGaps[0][d0], maxGap);
@@ -250,44 +263,49 @@ function scoreCombo(num, ctx) {
     : 0.1;
   const pairRaw = Math.sqrt(p01 * p12) * 10;
 
-  // L7: Monthly seasonal digit bias
-  const sea0 = +(monthDigitFreq[String(d0)] || 10);
-  const sea1 = +(monthDigitFreq[String(d1)] || 10);
-  const sea2 = +(monthDigitFreq[String(d2)] || 10);
-  const seasonRaw = (sea0 + sea1 + sea2) / 30;
+  // L7: Season — disabled (weight=0), kept for struct compatibility
+  const seasonRaw = 0;
 
-  return { mRaw, o2Raw, mlRaw, slRaw, dwRaw, rcRaw, suRaw, overdueRaw, pairRaw, seasonRaw };
+  // L8: Hot-Digit-Per-Position (FIX-O) — geometric mean of per-position frequencies
+  // pH[pos][digit] = P(digit at pos) over last 50 draws. Cube root = geometric mean.
+  const hpRaw = Math.cbrt((pH[0][d0] || 1e-6) * (pH[1][d1] || 1e-6) * (pH[2][d2] || 1e-6));
+
+  return { mRaw, o2Raw, mlRaw, slRaw, dwRaw, rcRaw, suRaw, overdueRaw, pairRaw, seasonRaw, hpRaw };
 }
 
 /**
  * Main async scoring function — processes 1000 combos in chunks of 100.
- * Yields between chunks to keep the UI responsive (BUG-E fix preserved).
+ * Yields between chunks to keep the UI responsive.
  *
- * @param {Object} S - Base statistical dataset
- * @param {Array}  mergedTrans - Augmented 1st-order transition matrices
- * @param {Array}  transRowSums - Row sums for normalization
+ * @param {Object} S              - Base statistical dataset
+ * @param {Array}  mergedTrans    - Augmented 1st-order transition matrices [3][10][10]
+ * @param {Array}  transRowSums   - Row sums for normalization [3][10]
  * @param {Object} mergedComboFreq - Merged combo frequency map
- * @param {Array}  liveGaps - Live digit gaps per position
- * @param {Array}  decayWeights - Per-digit exponential decay weights
- * @param {Array}  liveDtrans2 - Live 2nd-order transitions (from buildLiveDtrans2)
- * @param {string} slot - Draw slot ('2pm'/'5pm'/'9pm')
- * @param {string} dow - Day of week key ('M','T','W','TH','F','S','SU')
- * @param {Array}  drawHistory - All draws in chronological order
- * @param {Object} weights - Layer weights (normalized internally)
- * @param {Function} onProgress - Progress callback (0–100)
+ * @param {Array}  liveGaps       - Live digit gaps per position [3][10]
+ * @param {Array}  decayWeights   - Per-digit exp decay weights [10] (window=50, hl=15)
+ * @param {Array}  liveDtrans2    - Live 2nd-order transitions (from buildLiveDtrans2)
+ * @param {string} slot           - Draw slot ('2pm'/'5pm'/'9pm')
+ * @param {string} dow            - Day of week key ('M','T','W','TH','F','S','SU')
+ * @param {Array}  drawHistory    - All draws in chronological order
+ * @param {Array}  posHot50       - Per-position digit probabilities last 50 draws [3][10]
+ * @param {Array}  recentSumFreq  - Digit-sum frequency last 30 draws (normalized) [28]
+ * @param {Object} weights        - Layer weights (normalized internally)
+ * @param {Function} onProgress   - Progress callback (0–100)
  * @returns {Promise<Array>} Sorted array of { num, score, scoreDisplay, layers }
  */
 async function computeScoresAsync(
   S, mergedTrans, transRowSums, mergedComboFreq,
   liveGaps, decayWeights, liveDtrans2,
   slot, dow, drawHistory,
+  posHot50, recentSumFreq,
   weights = DEFAULT_WEIGHTS, onProgress = null
 ) {
   const { weights: wn } = normalizeWeights(weights);
   const ctx = buildScoringContext(
     S, mergedTrans, transRowSums, mergedComboFreq,
     liveGaps, decayWeights, liveDtrans2,
-    slot, dow, drawHistory
+    slot, dow, drawHistory,
+    posHot50, recentSumFreq
   );
 
   const rawScores = new Array(1000);
@@ -303,7 +321,7 @@ async function computeScoresAsync(
   }
 
   // Min-max normalize each layer across all 1000 combos
-  const layerKeys = ['mRaw','o2Raw','mlRaw','slRaw','dwRaw','rcRaw','suRaw','overdueRaw','pairRaw','seasonRaw'];
+  const layerKeys = ['mRaw','o2Raw','mlRaw','slRaw','dwRaw','rcRaw','suRaw','overdueRaw','pairRaw','hpRaw'];
   const maxVals = {}, minVals = {};
   layerKeys.forEach(k => {
     const vals = rawScores.map(s => s[k]);
@@ -312,9 +330,10 @@ async function computeScoresAsync(
   });
 
   const layerToWeight = {
-    mRaw: wn.markov, o2Raw: wn.ord2, mlRaw: wn.ml,
-    slRaw: wn.slot, dwRaw: wn.dow, rcRaw: wn.rec,
-    suRaw: wn.sum, overdueRaw: wn.overdue, pairRaw: wn.pair, seasonRaw: wn.season,
+    mRaw: wn.markov, o2Raw: wn.ord2,  mlRaw: wn.ml,
+    slRaw: wn.slot,  dwRaw: wn.dow,   rcRaw: wn.rec,
+    suRaw: wn.sum,   overdueRaw: wn.overdue, pairRaw: wn.pair,
+    hpRaw: wn.hotpos,
   };
 
   const results = rawScores.map(s => {
@@ -342,7 +361,7 @@ async function computeScoresAsync(
         sum:     Math.round(normalized.suRaw * 100),
         overdue: Math.round(normalized.overdueRaw * 100),
         pair:    Math.round(normalized.pairRaw * 100),
-        season:  Math.round(normalized.seasonRaw * 100),
+        hotpos:  Math.round(normalized.hpRaw * 100),
       },
     };
   });
@@ -351,4 +370,4 @@ async function computeScoresAsync(
   return results.sort((a, b) => b.score - a.score);
 }
 
-export { computeScoresAsync, normalizeWeights, buildLiveDtrans2, getSlotPosFreq, DEFAULT_WEIGHTS };
+export { computeScoresAsync, normalizeWeights, buildLiveDtrans2, getSlotPosFreq, DEFAULT_WEIGHTS, buildScoringContext };

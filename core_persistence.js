@@ -1,19 +1,20 @@
 /**
- * core_persistence.js — localStorage layer with quota management v5.2
+ * core_persistence.js — localStorage layer with quota management v5.4
  *
- * FIXES (v5.2):
- * - FIX-E: VAL_CACHE key exposed as KEYS.VALIDATION_CACHE for consistent clearing
- *          (inline code was using a raw string 'sw5_validation' separately)
- * - Prediction log trimmed to 500 entries on every save (not only on quota error)
+ * FIXES (v5.4):
+ * - Added KEYS.LAST_SCORES ('sw5_last_scores') for prediction retention (FIX-K)
  *
- * All functions are pure — no side effects except storage reads/writes.
+ * PRESERVED from v5.2:
+ * - FIX-E: KEYS.VALIDATION_CACHE constant (consistent key across all paths)
+ * - Prediction log trimmed to 500 entries on every save
  */
 
 const KEYS = {
   USER_DRAWS:       'sw5_user_draws',
   PREDICTIONS:      'sw5_predictions',
   WEIGHTS:          'sw5_weights',
-  VALIDATION_CACHE: 'sw5_validation',  // FIX-E: was 'sw5_validation_cache' in some paths
+  VALIDATION_CACHE: 'sw5_validation',
+  LAST_SCORES:      'sw5_last_scores',  // FIX-K: prediction retention across reloads
 };
 
 /** Read JSON from localStorage safely */
@@ -135,6 +136,27 @@ function saveValidationCache(report) {
   return writeStore(KEYS.VALIDATION_CACHE, report);
 }
 
+/** Load last computed prediction scores (retention across reloads) */
+function loadLastScores() {
+  const cache = readStore(KEYS.LAST_SCORES, null);
+  // FIX-S: reject stale pre-v5.4 caches that lack the hotpos layer
+  if (!cache || !cache.scores?.length || cache.scores[0]?.layers?.hotpos === undefined) {
+    return null;
+  }
+  return cache;
+}
+
+/** Save last computed prediction scores (top-20 + metadata) */
+function saveLastScores(scores, slot, dow) {
+  if (!scores?.length) return { ok: false, error: 'empty scores' };
+  return writeStore(KEYS.LAST_SCORES, {
+    scores: scores.slice(0, 20),
+    slot,
+    dow,
+    ts: new Date().toISOString(),
+  });
+}
+
 /** Clear all app data (full reset) */
 function clearAllData() {
   Object.values(KEYS).forEach(k => localStorage.removeItem(k));
@@ -146,6 +168,7 @@ export {
   loadUserDraws, saveUserDraws, addUserDraw,
   loadPredictions, savePredictions,
   loadWeights, saveWeights,
+  loadLastScores, saveLastScores,
   clearValidationCache, loadValidationCache, saveValidationCache,
   clearAllData,
 };

@@ -1,13 +1,15 @@
 /**
- * core_backtesting.js — Rigorous chronological backtesting engine v5.2
+ * core_backtesting.js — Rigorous chronological backtesting engine v5.4
  *
- * FIXES (v5.2):
+ * FIXES (v5.4):
+ * - makeCurrentModel updated to include L8 Hot-Digit-Per-Position
+ * - makeCurrentModel updated to use recent-sum-freq (L5a) from last 30 draws
+ * - Recency window updated to 50 draws, half-life 15
+ *
+ * PRESERVED from v5.2:
  * - FIX-F: L1 Markov uses log geometric mean (numerical stability)
  * - FIX-G: trainRatio exposed as parameter (80/90/95 options)
  * - Fixed pooled SE formula: uses (1/n1 + 1/n2) not (2/n1) when n1 ≠ n2
- * - scoreAll_current aligned with scoring engine (log Markov, correct mlR)
- *
- * PRESERVED from v5.1:
  * - BUG-B: Model caches built ONCE from training data only (no leakage)
  * - BUG-D: Correct erf / normalCDF / upper-tail p-value
  * - Bonferroni correction (α = 0.05 / 4 = 0.0125)
@@ -128,21 +130,45 @@ function buildTrainCache(trainDraws) {
   const totalDraws    = trainDraws.length;
   const maxComboFreq  = Math.max(...Object.values(comboFreq), 1);
 
-  return { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq };
+  // Pass trainDraws reference so makeCurrentModel can compute L8/L5a from the tail
+  return { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq, trainDraws };
 }
 
 /**
- * Current multi-layer system — mirrors scoring engine logic.
+ * Current multi-layer system — mirrors scoring engine logic (v5.4).
  * FIX-F: Log geometric mean for Markov (numerical stability).
+ * FIX-O: L8 Hot-Digit-Per-Position included.
+ * FIX-Q: L5a uses recent 30-draw sum frequency.
  */
 function makeCurrentModel(cache) {
-  const { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq } = cache;
+  const { trans, transRowSums, posFreq, comboFreq, lastSeen, totalDraws, maxComboFreq, trainDraws } = cache;
+
+  // Pre-compute hot-digit per position from last 50 draws of training set
+  const win50 = trainDraws.slice(-50);
+  const posHot = Array.from({ length: 3 }, () => new Array(10).fill(0));
+  win50.forEach(d => { for (let p = 0; p < 3; p++) posHot[p][+d.result[p]]++; });
+  const pH = posHot.map(row => {
+    const tot = row.reduce((a, b) => a + b, 0) || 1;
+    return row.map(v => v / tot);
+  });
+
+  // Pre-compute recent sum frequency from last 30 draws of training set
+  const win30 = trainDraws.slice(-30);
+  const recentSF = new Array(28).fill(0);
+  win30.forEach(d => {
+    const sv = d.result.split('').reduce((a, c) => a + +c, 0);
+    if (sv <= 27) recentSF[sv]++;
+  });
+  const sfTot = recentSF.reduce((a, b) => a + b, 0) || 1;
+  const recentSFNorm = recentSF.map(v => v / sfTot);
+  const maxRSF = Math.max(...recentSFNorm, 0.001);
 
   return function scoreAll(lastResult) {
     return Array.from({ length: 1000 }, (_, n) => {
       const num = n.toString().padStart(3, '0');
+      const [d0, d1, d2] = [+num[0], +num[1], +num[2]];
 
-      // L1: log geometric mean of per-position Markov probabilities
+      // L1: log geometric mean Markov
       let logM = 0;
       for (let p = 0; p < 3; p++) {
         const from = +lastResult[p], to = +num[p];
@@ -161,17 +187,26 @@ function makeCurrentModel(cache) {
       // L3: Historical combo frequency
       const freqScore = ((comboFreq[num] || 0) + 1) / (maxComboFreq + 1);
 
-      // L4: Recency — exponential decay (half-life 200 draws)
+      // L4b: Recency — exponential decay (half-life 200 draws)
       const lastIdx = lastSeen[num] !== undefined ? lastSeen[num] : 0;
       const gap     = totalDraws - 1 - lastIdx;
       const recency = Math.exp(-gap / 200);
 
-      // L5: Overdue boost
+      // L5a: Recent sum frequency
+      const sv = d0 + d1 + d2;
+      const sumScore = (sv <= 27 ? recentSFNorm[sv] : 0) / maxRSF;
+
+      // L5b: Overdue boost
       const expectedGap = totalDraws / Math.max(comboFreq[num] || 0, 1);
       const overdue     = Math.min(2.0, gap / Math.max(expectedGap, 1));
 
-      const score = 0.30 * mScore + 0.25 * posScore + 0.20 * freqScore +
-                    0.15 * recency + 0.10 * overdue;
+      // L8: Hot-Digit-Per-Position
+      const hpScore = Math.cbrt(
+        (pH[0][d0] || 1e-6) * (pH[1][d1] || 1e-6) * (pH[2][d2] || 1e-6)
+      );
+
+      const score = 0.28 * mScore + 0.18 * hpScore + 0.20 * posScore +
+                    0.15 * freqScore + 0.09 * recency + 0.05 * sumScore + 0.05 * overdue;
 
       return { combo: num, score };
     }).sort((a, b) => b.score - a.score);

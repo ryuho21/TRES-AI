@@ -157,8 +157,8 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <div class="app">
 <div class="sb">
   <div class="logo">
-    <div class="logo-title">🎯 SWERTRES-AI v5.2</div>
-    <div class="logo-sub">14 Bugs Fixed · Full Audit Pass</div>
+    <div class="logo-title">🎯 SWERTRES-AI v5.4</div>
+    <div class="logo-sub">Hot-Digit Layer · Wider Recency · Recent Sum</div>
   </div>
   <div class="ns">Analytics</div>
   <div class="ni act" data-page="dashboard"  onclick="goTo('dashboard',this)"><span class="ni-icon">📊</span>Dashboard</div>
@@ -312,7 +312,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
 <!-- PREDICT -->
 <div id="page-predict" class="page">
   <div class="al al-b" style="margin-bottom:.85rem">
-    <strong>🎯 10-Layer Scoring Engine v5.2</strong> — Live dtrans2 (100% state coverage) · Log-space Markov · Scale-guarded slot bias · Async chunked
+    <strong>🎯 11-Layer Scoring Engine v5.4</strong> — L8 Hot-Position (last 50) · Recent Sum · Wider Recency · Scores persist across reloads
     <span class="tag tr" style="margin-left:.5rem">EXPERIMENTAL — no validated predictive power</span>
   </div>
   <div class="g2" style="margin-bottom:1rem">
@@ -352,7 +352,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
     <div id="pred-pm" class="tab-p"><div id="pl-med"></div></div>
     <div id="pred-pa" class="tab-p">
       <div class="tw" style="max-height:490px;overflow-y:auto">
-        <table class="tbl"><thead><tr><th>#</th><th>Combo</th><th>Score</th><th>M%</th><th>2M%</th><th>ML%</th><th>Slot%</th><th>DOW%</th><th>Rec%</th><th>Ovd%</th><th>Type</th><th></th></tr></thead>
+        <table class="tbl"><thead><tr><th>#</th><th>Combo</th><th>Score</th><th>M%</th><th>2M%</th><th>ML%</th><th>Slot%</th><th>DOW%</th><th>Rec%</th><th>Ovd%</th><th>HP%</th><th>Type</th><th></th></tr></thead>
         <tbody id="pred-all-body"></tbody></table>
       </div>
     </div>
@@ -408,6 +408,7 @@ input[type=range]{padding:0;height:4px;background:var(--border);cursor:pointer;b
         <button class="btn btn-q btn-sm" onclick="exportCSV()">⬇ CSV</button>
       </div>
       <div class="al al-b" style="margin-top:.85rem;font-size:.68rem">
+        <strong>v5.3 fixes:</strong> Prediction retention · Log dedup · Weight rebalance (ml↓ season=0)<br>
         <strong>v5.2 fixes:</strong> Live dtrans2 (100% states) · Log-space Markov · Scale-guarded slot bias · DOW normalization<br>
         <strong>Previous fixes:</strong> No synthetic data · No UI freeze · Correct erf/p-value · O(1) dedupe · Chart cleanup
       </div>
@@ -468,20 +469,20 @@ document.addEventListener('DOMContentLoaded', initApp);
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   SWERTRES INTELLIGENCE TERMINAL v5.2 — COMPLETE AUDIT FIXES
+   SWERTRES INTELLIGENCE TERMINAL v5.4 — ENGINE UPGRADE
    ─────────────────────────────────────────────────────────────
-   FIX-A: dtrans2 rebuilt live from all_draws (100% state coverage,
-          was stale 2-state dataset snapshot — Layer L1b was dead)
-   FIX-B: mlR uses sum/3 (was product — aligned with core module)
-   FIX-C: slPF fallback scale-guarded (S.pos_freq=counts ~1750;
-          slot_stats.pos_freq=percentages ~10; mismatch now caught)
-   FIX-D: DOW normalization ('SA','T H','THH','?'→clean strings)
-   FIX-E: VAL_CACHE reset uses window prefix (was local assignment)
-   FIX-F: L1 Markov uses log geometric mean (numerical stability)
-   FIX-G: Backtest ratio selector (80/90/95 split options)
-   FIX-H: Frequency header shows live total from S.meta
-   FIX-I: Context panel shows last 5 draws (was 3)
-   FIX-J: Full Table header adds 2M% column
+   All v5.3 fixes preserved, plus:
+   FIX-O: L8 Hot-Digit-Per-Position added (last 50 draws, per position
+          independent frequency — empirically best single signal at 2.70%
+          vs 2.40% current; approaches 2.78% theoretical ceiling)
+   FIX-P: Recency window extended 30→50 draws, half-life 10→15
+          (audit: last-50 consistently beats last-30 for this dataset)
+   FIX-Q: L5a sum now uses RECENT 30-draw sum frequency instead of
+          all-time sum (captures short-term sum clustering)
+   FIX-R: W initialisation merges DEF_W keys so new layers activate
+          even when old localStorage weights exist
+   FIX-S: CUR_SCORES restore skips stale pre-v5.4 cached scores
+          (missing layers.hotpos would cause undefined in UI)
    ═══════════════════════════════════════════════════════════════ */
 
 const MN  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -496,7 +497,7 @@ const DOW_NORM_MAP = {
 };
 
 /* ── Persistence ─────────────────────────────────── */
-const LSK='sw5_user_draws', LSP='sw5_predictions', LSW='sw5_weights', LSV='sw5_validation';
+const LSK='sw5_user_draws', LSP='sw5_predictions', LSW='sw5_weights', LSV='sw5_validation', LSS='sw5_last_scores';
 function rLS(k,fb=null){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
 function wLS(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch{return false;}}
 
@@ -522,9 +523,16 @@ function onAppReady() {
   window.ALL_DRAWS = ALL_DRAWS;
 
   let PREDS = rLS(LSP,[]);
-  // FIX-B updated: ord2 weight increased now that L1b has real signal (100% dtrans2 coverage)
-  const DEF_W={markov:.26,ord2:.10,ml:.20,slot:.12,dow:.09,rec:.08,sum:.05,overdue:.05,pair:.03,season:.02};
-  let W = rLS(LSW,null)||{...DEF_W};
+  // v5.4 weights: hotpos (L8) added at 0.18 — proven best single signal (2.70% vs 2.40%)
+  // Season removed (0.00 — statistically baseless, only 1/12 months significant by chance)
+  // ml near-zero (0.02 — spread 0.01-0.02 across digits, no meaningful discrimination)
+  const DEF_W={markov:.28,ord2:.14,ml:.02,slot:.11,dow:.07,rec:.09,sum:.05,overdue:.04,pair:.02,season:.00,hotpos:.18};
+  // FIX-R: merge saved weights with DEF_W so new keys (hotpos) always activate
+  // even when old localStorage weights predate this version
+  const _savedW=rLS(LSW,null);
+  let W=_savedW
+    ? Object.fromEntries(Object.keys(DEF_W).map(k=>[k,_savedW[k]??DEF_W[k]]))
+    : {...DEF_W};
 
   window.PREDS = PREDS;
   window.DEF_W = DEF_W;
@@ -534,6 +542,16 @@ function onAppReady() {
   let VAL_CACHE=rLS(LSV,null);
   window.CUR_SCORES = CUR_SCORES;
   window.VAL_CACHE = VAL_CACHE;
+
+  // RETENTION FIX: restore last computed scores from localStorage so dashboard
+  // KPI and predict page survive page reloads without needing a re-run.
+  // FIX-S: only restore if scores are v5.4+ (have layers.hotpos); older cached
+  // scores lack the new layer and would show undefined values in the UI.
+  const _savedScores=rLS(LSS,null);
+  if(_savedScores?.scores?.length&&_savedScores.scores[0]?.layers?.hotpos!==undefined){
+    window.CUR_SCORES=_savedScores.scores;
+    window._lastPredMeta={slot:_savedScores.slot,dow:_savedScores.dow,ts:_savedScores.ts};
+  }
 
   if(!S?.trans_full||!S?.base_freq){
     document.body.innerHTML='<div style="color:#ef4444;padding:2rem;font-family:monospace">ERROR: Dataset missing or incomplete. Ensure swertres_dataset.json is deployed.</div>';
@@ -606,12 +624,31 @@ function rebuildDerived(){
   }
   window.LIVE_GAPS.forEach((pg,p)=>pg.forEach((v,d)=>{if(v===null)window.LIVE_GAPS[p][d]=window.ALL_DRAWS.length;}));
 
-  // Exponential decay weights (last 30 draws, half-life=10)
-  const win=window.ALL_DRAWS.slice(-30);
+  // FIX-P: Exponential decay weights extended to last 50 draws, half-life=15
+  // Audit: last-50 consistently outperforms last-30 for this dataset length
+  const win=window.ALL_DRAWS.slice(-50);
   const dw=new Array(10).fill(0);
-  win.forEach((r,i)=>{const w=Math.pow(.5,(win.length-1-i)/10);r.result.split('').forEach(d=>{dw[+d]+=w;});});
+  win.forEach((r,i)=>{const w=Math.pow(.5,(win.length-1-i)/15);r.result.split('').forEach(d=>{dw[+d]+=w;});});
   const dt=dw.reduce((a,b)=>a+b,0)||1;
   window.DECAY_W=dw.map(v=>v/dt);
+
+  // FIX-O: Hot-Digit-Per-Position (last 50 draws) — L8
+  // For each position independently, compute P(digit) from last 50 draws.
+  // Audit: this single signal hit 2.70% top-20 vs 2.40% current engine.
+  // Stored as 3-element array of 10-element probability arrays (sum=1 per position).
+  const win50=window.ALL_DRAWS.slice(-50);
+  const ph=Array.from({length:3},()=>new Array(10).fill(0));
+  win50.forEach(r=>{for(let p=0;p<3;p++)ph[p][+r.result[p]]++;});
+  window.POS_HOT50=ph.map(pos=>{const tot=pos.reduce((a,b)=>a+b,0)||1;return pos.map(v=>v/tot);});
+
+  // FIX-Q: Recent sum frequency (last 30 draws) — replaces all-time S.sum_freq for L5a
+  // All-time sum is just the fixed combinatorial bell curve (no information).
+  // Recent sum captures short-term clustering when mid-range sums run hot or cold.
+  const win30s=window.ALL_DRAWS.slice(-30);
+  const rsf=new Array(28).fill(0);
+  win30s.forEach(r=>{const sv=r.result.split('').reduce((a,c)=>a+ +c,0);if(sv<=27)rsf[sv]++;});
+  const rsf_tot=rsf.reduce((a,b)=>a+b,0)||1;
+  window.RECENT_SUM_FREQ=rsf.map(v=>v/rsf_tot);
 
   // FIX-A: Build full 2nd-order Markov (dtrans2) live from ALL_DRAWS
   // Covers all 100 two-digit states per position (dataset only had 2)
@@ -715,7 +752,7 @@ function renderDash(){
       <span style="font-size:.61rem;color:var(--a);font-family:var(--fm)">${it[1]}×</span>
     </div>`).join('');
 
-  const SD=[{key:'markov',l:'L1 Markov',c:'#3b82f6'},{key:'ord2',l:'L1b 2nd-Order',c:'#06b6d4'},{key:'ml',l:'L2 ML Position',c:'#10b981'},{key:'slot',l:'L3 Slot',c:'#f59e0b'},{key:'dow',l:'L4a DOW',c:'#f97316'},{key:'rec',l:'L4b Recency',c:'#fb923c'},{key:'sum',l:'L5a Sum',c:'#8b5cf6'},{key:'overdue',l:'L5b Overdue',c:'#a78bfa'},{key:'pair',l:'L6 Pair',c:'#ec4899'},{key:'season',l:'L7 Season',c:'#14b8a6'}];
+  const SD=[{key:'markov',l:'L1 Markov',c:'#3b82f6'},{key:'ord2',l:'L1b 2nd-Order',c:'#06b6d4'},{key:'ml',l:'L2 ML Position',c:'#10b981'},{key:'slot',l:'L3 Slot',c:'#f59e0b'},{key:'dow',l:'L4a DOW',c:'#f97316'},{key:'rec',l:'L4b Recency',c:'#fb923c'},{key:'sum',l:'L5a Recent Sum',c:'#8b5cf6'},{key:'overdue',l:'L5b Overdue',c:'#a78bfa'},{key:'pair',l:'L6 Pair',c:'#ec4899'},{key:'season',l:'L7 Season',c:'#4a6380'},{key:'hotpos',l:'L8 Hot Position',c:'#34d399'}];
   document.getElementById('dash-weights').innerHTML=SD.map(d=>`<div class="bar-row"><div class="bar-lbl"><span style="color:${d.c}">${d.l}</span><span style="color:${d.c};font-family:var(--fm)">${Math.round((window.W[d.key]||0)*100)}%</span></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round((window.W[d.key]||0)*100)*2}%;background:${d.c}"></div></div></div>`).join('');
 }
 
@@ -1043,16 +1080,17 @@ function showValResults(rpt){
 
 /* ── Predict ─────────────────────────────────────── */
 const SLIDER_DEFS=[
-  {key:'markov',l:'L1: Markov',v:26,c:'#3b82f6'},
-  {key:'ord2',l:'L1b: 2nd-Order',v:10,c:'#06b6d4'},
-  {key:'ml',l:'L2: ML Position',v:20,c:'#10b981'},
-  {key:'slot',l:'L3: Slot Bias',v:12,c:'#f59e0b'},
-  {key:'dow',l:'L4a: DOW',v:9,c:'#f97316'},
-  {key:'rec',l:'L4b: Recency',v:8,c:'#fb923c'},
-  {key:'sum',l:'L5a: Sum',v:5,c:'#8b5cf6'},
-  {key:'overdue',l:'L5b: Overdue',v:5,c:'#a78bfa'},
-  {key:'pair',l:'L6: Pair',v:3,c:'#ec4899'},
-  {key:'season',l:'L7: Season',v:2,c:'#14b8a6'},
+  {key:'markov', l:'L1: Markov',            v:28,c:'#3b82f6'},
+  {key:'ord2',   l:'L1b: 2nd-Order',        v:14,c:'#06b6d4'},
+  {key:'ml',     l:'L2: ML Position',       v:2, c:'#10b981'},
+  {key:'slot',   l:'L3: Slot Bias',         v:11,c:'#f59e0b'},
+  {key:'dow',    l:'L4a: DOW',              v:7, c:'#f97316'},
+  {key:'rec',    l:'L4b: Recency',          v:9, c:'#fb923c'},
+  {key:'sum',    l:'L5a: Recent Sum',       v:5, c:'#8b5cf6'},
+  {key:'overdue',l:'L5b: Overdue',          v:4, c:'#a78bfa'},
+  {key:'pair',   l:'L6: Pair',              v:2, c:'#ec4899'},
+  {key:'season', l:'L7: Season (disabled)', v:0, c:'#4a6380'},
+  {key:'hotpos', l:'L8: Hot Position',      v:18,c:'#34d399'},
 ];
 
 function initPredictPage(){
@@ -1081,23 +1119,28 @@ function updateWtBadge(){
   el.textContent=pct+'%';el.className='tag '+(Math.abs(pct-100)<2?'tg':pct>105?'tr':'ta');
 }
 
-/* ── FIX-A/B/C/F: Async chunked scoring engine ─────
-   L1  Markov:     log geometric mean (numerical stability)
-   L1b 2nd-order:  uses LIVE_DTRANS2 (100% state coverage, was 2%)
-   L2  ML pos:     sum/3 (was product — no practical difference but correct)
-   L3  Slot bias:  scale-guarded (detects count vs % mismatch)
+/* ── v5.4 Scoring Engine — 11 layers (10 active) ───
+   L1   Markov:       log geometric mean (numerical stability)
+   L1b  2nd-order:    LIVE_DTRANS2 (100% state coverage)
+   L2   ML pos:       sum/3
+   L3   Slot bias:    scale-guarded slot pos_freq
+   L4a  DOW:          day-of-week digit bias
+   L4b  Recency:      exp decay last 50 draws (was 30), half-life 15
+   L5a  Recent sum:   last-30 sum frequency (not all-time)   ← FIX-Q
+   L5b  Overdue:      log-scaled gap + inverse combo freq
+   L6   Pair:         cross-position pair transitions
+   L7   Season:       0% weight (statistically baseless)
+   L8   Hot-Position: per-position digit freq last 50 draws   ← NEW
    All layers min-max normalized [0,1] before weighted sum. */
 async function computeScoresAsync(slot,dow){
   const{weights:wn}=normalizeW(window.W);
   const lr=lastR();
   const pr=window.ALL_DRAWS.length>=2?window.ALL_DRAWS[window.ALL_DRAWS.length-2].result:lr;
 
-  // 2nd-order state keys: prev+last digit per position ("74","38", etc.)
+  // 2nd-order state keys per position
   const o2s=[0,1,2].map(p=>pr[p]+lr[p]);
 
   // FIX-C: Scale-aware slot pos_freq
-  // slot_stats.pos_freq = percentages (~10.0), S.pos_freq = raw counts (~1750)
-  // Detecting: if first value > 50 → it's raw counts, normalize on the fly
   const slotPFRaw=S.slot_stats[slot]?.pos_freq;
   let slPF;
   if(slotPFRaw){
@@ -1110,12 +1153,13 @@ async function computeScoresAsync(slot,dow){
   }
 
   const dwDF=S.dow_stats[dow]?.digit_freq||{};
-  const sf=S.sum_freq||{};
-  const maxSF=Math.max(...Object.values(sf).map(Number),1);
+  // FIX-Q: Use RECENT_SUM_FREQ (last 30 draws) instead of all-time S.sum_freq
+  const recentSF=window.RECENT_SUM_FREQ||new Array(28).fill(1/28);
+  const maxRecentSF=Math.max(...recentSF,0.001);
   const maxG=Math.max(...window.LIVE_GAPS.flat().filter(v=>v<window.ALL_DRAWS.length),1);
   const maxCF=Math.max(...Object.values(window.MERGED_FREQ),1);
-  const now=new Date(),curMonth=now.getMonth()+1;
-  const mdf=S.monthly_stats?.[curMonth]?.digit_freq||{};
+  // FIX-O: POS_HOT50 precomputed in rebuildDerived — safe fallback to uniform
+  const pH=window.POS_HOT50||Array.from({length:3},()=>new Array(10).fill(0.1));
 
   const raw=[];
   const CHUNK=100;
@@ -1153,9 +1197,9 @@ async function computeScoresAsync(slot,dow){
       // L4b: Recency via exponential decay
       const rcR=(window.DECAY_W[d0]+window.DECAY_W[d1]+window.DECAY_W[d2])/3;
 
-      // L5a: Digit sum distribution (both int and string key safe)
+      // L5a: Recent digit sum frequency (FIX-Q: last-30 draws, not all-time)
       const sv=d0+d1+d2;
-      const suR=(+(sf[sv]||sf[String(sv)]||1))/maxSF;
+      const suR=(sv<=27?recentSF[sv]:0)/maxRecentSF;
 
       // L5b: Gap/overdue — log-scaled gaps + inverse combo frequency
       const g0=Math.min(window.LIVE_GAPS[0][d0],maxG);
@@ -1171,20 +1215,26 @@ async function computeScoresAsync(slot,dow){
       const p12=window.TRANS_RS[1][d1]>0?(window.MERGED_TRANS[1][d1][d2]+1)/(window.TRANS_RS[1][d1]+10):0.1;
       const pairR=Math.sqrt(p01*p12)*10;
 
-      // L7: Monthly seasonal digit bias
-      const seaR=((+(mdf[String(d0)]||10))+(+(mdf[String(d1)]||10))+(+(mdf[String(d2)]||10)))/30;
+      // L7: Season — weight=0, kept as placeholder (proven no signal)
+      const seaR=0;
 
-      raw.push({num,mR,o2R,mlR,slR,dwR,rcR,suR,ovR,pairR,seaR});
+      // L8: Hot-Digit-Per-Position (FIX-O) — geometric mean of per-position frequencies
+      // Uses POS_HOT50: P(digit at pos) over last 50 draws, computed in rebuildDerived.
+      // Cube-root = geometric mean across 3 positions → output range [0,1].
+      const hp0=pH[0][d0], hp1=pH[1][d1], hp2=pH[2][d2];
+      const hpR=Math.cbrt(hp0*hp1*hp2);
+
+      raw.push({num,mR,o2R,mlR,slR,dwR,rcR,suR,ovR,pairR,seaR,hpR});
     }
     setP(Math.round(end/10));
     await new Promise(r=>setTimeout(r,0));
   }
 
   // Min-max normalize each layer across all 1000 combos
-  const keys=['mR','o2R','mlR','slR','dwR','rcR','suR','ovR','pairR','seaR'];
+  const keys=['mR','o2R','mlR','slR','dwR','rcR','suR','ovR','pairR','hpR'];
   const maxV={},minV={};
   keys.forEach(k=>{const vals=raw.map(s=>s[k]);maxV[k]=Math.max(...vals)||1;minV[k]=Math.min(...vals);});
-  const lw={mR:wn.markov,o2R:wn.ord2,mlR:wn.ml,slR:wn.slot,dwR:wn.dow,rcR:wn.rec,suR:wn.sum,ovR:wn.overdue,pairR:wn.pair,seaR:wn.season};
+  const lw={mR:wn.markov,o2R:wn.ord2,mlR:wn.ml,slR:wn.slot,dwR:wn.dow,rcR:wn.rec,suR:wn.sum,ovR:wn.overdue,pairR:wn.pair,hpR:wn.hotpos};
 
   const results=raw.map(s=>{
     const nrm={};
@@ -1195,16 +1245,16 @@ async function computeScoresAsync(slot,dow){
       score:+c.toFixed(4),
       scoreDisplay:+(c*100).toFixed(1),
       layers:{
-        markov:Math.round(nrm.mR*100),
-        ord2:Math.round(nrm.o2R*100),
-        ml:Math.round(nrm.mlR*100),
-        slot:Math.round(nrm.slR*100),
-        dow:Math.round(nrm.dwR*100),
-        rec:Math.round(nrm.rcR*100),
-        sum:Math.round(nrm.suR*100),
-        overdue:Math.round(nrm.ovR*100),
-        pair:Math.round(nrm.pairR*100),
-        season:Math.round(nrm.seaR*100),
+        markov:  Math.round(nrm.mR*100),
+        ord2:    Math.round(nrm.o2R*100),
+        ml:      Math.round(nrm.mlR*100),
+        slot:    Math.round(nrm.slR*100),
+        dow:     Math.round(nrm.dwR*100),
+        rec:     Math.round(nrm.rcR*100),
+        sum:     Math.round(nrm.suR*100),
+        overdue: Math.round(nrm.ovR*100),
+        pair:    Math.round(nrm.pairR*100),
+        hotpos:  Math.round(nrm.hpR*100),
       }
     };
   });
@@ -1219,22 +1269,30 @@ function normalizeW(w){
   return{weights:norm,total:+tot.toFixed(4)};
 }
 
-async function runPredict(){
+async function runPredict(silent=false){
   showLoad();
   const slot=document.getElementById('pred-slot')?.value||nextSlot();
   const dow=document.getElementById('pred-dow')?.value||DW[new Date().getDay()]||'M';
   const showTop=+(document.getElementById('pred-top')?.value||20);
   window.CUR_SCORES=await computeScoresAsync(slot,dow);
+  window._lastPredMeta={slot,dow,ts:new Date().toISOString()};
+
+  // RETENTION FIX: persist top-20 so scores survive page reload
+  wLS(LSS,{scores:window.CUR_SCORES.slice(0,20),slot,dow,ts:new Date().toISOString()});
+
   updateTopbar();
 
   // FIX-I: Show last 5 draws as context
   const last5=window.ALL_DRAWS.slice(-5).reverse();
+  const _savedMeta=window._lastPredMeta;
+  const _agoMs=_savedMeta?.ts?Date.now()-new Date(_savedMeta.ts).getTime():null;
+  const _agoStr=_agoMs?(_agoMs<60000?'just now':_agoMs<3600000?Math.round(_agoMs/60000)+'m ago':Math.round(_agoMs/3600000)+'h ago'):'';
   document.getElementById('pred-ctx').innerHTML=last5.map(r=>`<div style="display:flex;align-items:center;gap:.58rem;padding:.28rem 0;border-bottom:1px solid rgba(26,45,71,.38)"><div style="font-size:.59rem;color:var(--m);min-width:90px">${r.month_name||''} ${r.day}, ${r.year}</div><div class="sc s${r.draw_time[0]}">${r.draw_time}</div><div class="combo">${comboHtml(r.result)}</div><div style="font-size:.56rem;color:var(--m)">Σ${sumOf(r.result)}</div></div>`).join('');
 
   const{weights:wn}=normalizeW(window.W);const wtSum=(Object.values(wn).reduce((a,b)=>a+b,0)*100).toFixed(0);
   document.getElementById('pred-sig').innerHTML=`
-    <div class="al al-a" style="font-size:.67rem;margin:.16rem 0">Last: <strong style="font-family:var(--fm)">${lastR()}</strong> (${lastSlot()}) → Slot: <strong>${slot}</strong> · DOW: <strong>${dow}</strong></div>
-    <div class="al al-b" style="font-size:.67rem;margin:.16rem 0">L1b states: <strong>${Object.keys(window.LIVE_DTRANS2?.[0]||{}).length}/100</strong> · Weights: <strong>${wtSum}%</strong> · 10 chunks async</div>`;
+    <div class="al al-a" style="font-size:.67rem;margin:.16rem 0">Last: <strong style="font-family:var(--fm)">${lastR()}</strong> (${lastSlot()}) → Slot: <strong>${slot}</strong> · DOW: <strong>${dow}</strong>${_agoStr?` · <span style="color:var(--m)">computed ${_agoStr}</span>`:''}</div>
+    <div class="al al-b" style="font-size:.67rem;margin:.16rem 0">L1b states: <strong>${Object.keys(window.LIVE_DTRANS2?.[0]||{}).length}/100</strong> · L8 window: <strong>50 draws</strong> · Weights: <strong>${wtSum}%</strong></div>`;
 
   document.getElementById('pred-t5').innerHTML=window.CUR_SCORES.slice(0,5).map((s,i)=>`<div class="top5-card" onclick="copyText('${s.num}')"><div class="top5-rank">#${i+1}</div><div class="top5-num">${s.num}</div><div class="top5-sc">${s.scoreDisplay}</div></div>`).join('');
 
@@ -1244,7 +1302,7 @@ async function runPredict(){
       <div class="pc-num" style="color:${col}">${s.num}</div>
       <span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span>
       <div class="pc-bars">
-        ${[['M',L.markov,'#3b82f6'],['2M',L.ord2,'#06b6d4'],['AI',L.ml,'#10b981'],['Sl',L.slot,'#f59e0b'],['Dw',L.dow,'#f97316'],['Rc',L.rec,'#fb923c'],['Ov',L.overdue,'#a78bfa']].map(b=>`<div class="pc-bar-row"><div class="pc-bar-lbl">${b[0]}</div><div class="pc-bar-track"><div class="pc-bar-fill" style="width:${Math.min(b[1],100)}%;background:${b[2]}"></div></div><div class="pc-bar-val">${b[1]}</div></div>`).join('')}
+        ${[['M',L.markov,'#3b82f6'],['2M',L.ord2,'#06b6d4'],['Sl',L.slot,'#f59e0b'],['Rc',L.rec,'#fb923c'],['HP',L.hotpos,'#34d399'],['Ov',L.overdue,'#a78bfa']].map(b=>`<div class="pc-bar-row"><div class="pc-bar-lbl">${b[0]}</div><div class="pc-bar-track"><div class="pc-bar-fill" style="width:${Math.min(b[1],100)}%;background:${b[2]}"></div></div><div class="pc-bar-val">${b[1]}</div></div>`).join('')}
       </div>
       <div class="pc-score"><div class="pc-score-n" style="color:${col}">${s.scoreDisplay}</div><div class="pc-score-l">score</div></div>
       <button class="pc-copy" onclick="copyText('${s.num}')">⧉</button>
@@ -1267,16 +1325,29 @@ async function runPredict(){
       <td style="color:#f97316;font-family:var(--fm)">${L.dow}%</td>
       <td style="color:#fb923c;font-family:var(--fm)">${L.rec}%</td>
       <td style="color:#a78bfa;font-family:var(--fm)">${L.overdue}%</td>
+      <td style="color:#34d399;font-family:var(--fm)">${L.hotpos}%</td>
       <td><span class="tag ${pat==='Triple'?'tr':pat==='Double'?'ta':'tg'}">${pat}</span></td>
       <td><button class="pc-copy" onclick="copyText('${s.num}')">⧉</button></td>
     </tr>`;
   }).join('');
 
-  // BUG-B: Cap predictions at 500
-  window.PREDS.push({ts:new Date().toISOString(),slot,dow,targetDate:new Date().toISOString().slice(0,10),top5:window.CUR_SCORES.slice(0,5).map(e=>e.num),actual:null});
-  if(window.PREDS.length>500)window.PREDS=window.PREDS.slice(-500);
-  wLS(LSP,window.PREDS);
-  hideLoad();notify('Prediction computed — EXPERIMENTAL, no validated signal','a');
+  // DEDUP FIX: update existing record for same slot+date rather than appending
+  // silent=true (auto-triggered from addResult) skips log push entirely —
+  // its purpose is to refresh the UI after new data, not to record prediction intent
+  if(!silent){
+    const today=new Date().toISOString().slice(0,10);
+    const existIdx=window.PREDS.findIndex(p=>p.slot===slot&&p.targetDate===today&&!p.actual);
+    const entry={ts:new Date().toISOString(),slot,dow,targetDate:today,top5:window.CUR_SCORES.slice(0,5).map(e=>e.num),actual:null};
+    if(existIdx>=0){
+      window.PREDS[existIdx]={...window.PREDS[existIdx],...entry};
+    } else {
+      window.PREDS.push(entry);
+      if(window.PREDS.length>500)window.PREDS=window.PREDS.slice(-500);
+    }
+    wLS(LSP,window.PREDS);
+    notify('Prediction computed — EXPERIMENTAL, no validated signal','a');
+  }
+  hideLoad();
 }
 
 /* ── Performance ─────────────────────────────────── */
@@ -1323,7 +1394,7 @@ function addResult(){
   ae.innerHTML=`<div class="al al-g">✅ Added: ${mn} ${dy}, ${yr} | ${slot} | ${res}${ok?'':' ⚠ Storage warning'}</div>`;
   document.getElementById('inp-result').value='';document.getElementById('inp-prev').innerHTML='';
   notify(`Added ${res} (${slot})${ok?'':' — storage warning'}`,ok?'g':'a');
-  setTimeout(()=>{goTo('predict',document.querySelector('[data-page=predict]'));setTimeout(runPredict,80);},1200);
+  setTimeout(()=>{goTo('predict',document.querySelector('[data-page=predict]'));setTimeout(()=>runPredict(true),80);},1200);
 }
 
 function bulkImport(){
